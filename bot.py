@@ -55,7 +55,9 @@ LFP_ROLE = "LFP Pings"  # opt-in role that /lfp mentions
 LFP_PING_COOLDOWN = 600  # one ping per poster per 10 min, so reposting can't spam everyone
 LFP_OPTIN_TEXT = ("**Want a ping when someone is looking for a party?**\n"
                   "Click the button to get the **LFP Pings** role; click again to stop. "
-                  "Post your own party with `/lfp`.")
+                  "Post your own party with `/lfp`.\n"
+                  "-# Chat here is cleared after 15 minutes; this message and open party cards stay.")
+LFP_CHAT_TTL = 900  # looking-for-party: other messages are deleted after 15 minutes
 PRESENCE_TEXT = {0: "Offline", 1: "Online, not in a game", 2: "In game", 3: "In Roblox Studio"}
 BLOXLINK_DAILY_LIMIT = int(os.environ.get("BLOXLINK_DAILY_LIMIT", "450"))
 DB_PATH = Path(os.environ.get("DB_PATH", "clan.db"))
@@ -204,6 +206,15 @@ def role_change_line(mention, added, removed, clan_member, roblox_username, over
 
 def lfp_should_ping(last_ping, now):
     return now - last_ping >= LFP_PING_COOLDOWN
+
+
+def lfp_chat_expired(created_ts, now, pinned, is_card):
+    """looking-for-party cleanup: everything older than 15 min goes, except pins and open party cards."""
+    return not pinned and not is_card and now - created_ts >= LFP_CHAT_TTL
+
+
+def has_button(message, custom_id):
+    return any(getattr(c, "custom_id", None) == custom_id for row in message.components for c in row.children)
 
 
 def join_url(roblox_id):
@@ -568,7 +579,11 @@ class ClanBot(discord.Client):
             await guild.create_role(name=LFP_ROLE, mentionable=False, reason="opt-in /lfp pings")
             notes.append(f"created role {LFP_ROLE}")
         lfp_ch = self.channel("Public", "looking-for-party")
-        if not [m for m in await lfp_ch.pins() if m.author == guild.me and m.content == LFP_OPTIN_TEXT]:
+        optin = next((m for m in await lfp_ch.pins() if m.author == guild.me and has_button(m, "lfp:role")), None)
+        if optin and optin.content != LFP_OPTIN_TEXT:
+            await optin.edit(content=LFP_OPTIN_TEXT)
+            notes.append("updated the pinned LFP pings message")
+        if optin is None:
             view = discord.ui.View(timeout=None)
             view.add_item(discord.ui.Button(label="Toggle LFP pings", emoji="\N{BELL}",
                                             style=discord.ButtonStyle.primary, custom_id="lfp:role"))
@@ -930,6 +945,17 @@ class ClanBot(discord.Client):
                     await self.render_lfp(row)
         except Exception:
             log.exception("lfp refresh failed")
+        try:  # keep looking-for-party clean
+            cards = {m for (m,) in self.db.execute("SELECT message_id FROM lfp")}
+            now = time.time()
+            ch = self.channel("Public", "looking-for-party")
+            gone = await ch.purge(limit=200, before=discord.Object(discord.utils.time_snowflake(
+                datetime.fromtimestamp(now - LFP_CHAT_TTL, JKT))), check=lambda m: lfp_chat_expired(
+                m.created_at.timestamp(), now, m.pinned, m.id in cards), reason="looking-for-party cleanup")
+            if gone:
+                log.info("cleared %s old messages from looking-for-party", len(gone))
+        except Exception:
+            log.exception("looking-for-party cleanup failed")
 
     @tasks.loop(minutes=5)
     async def sync_loop(self):

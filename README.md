@@ -30,6 +30,7 @@ What it does:
 
 ## /lfp (looking for party)
 - Modes: Survival, Ascension Island, PvP, Trials, Weekly Trials, plus free-text notes.
+- The channel stays clean: every 2 minutes the bot deletes messages older than 15 minutes, except pinned ones and open party cards.
 - Each card pings the opt-in **LFP Pings** role (at most once per poster per 10 minutes). People opt in or out with the pinned **Toggle LFP pings** button in looking-for-party, or via Discord Onboarding (Community servers: Server Settings → Onboarding → add a question giving the LFP Pings role).
 - **Join works for non-friends** only if the poster sets Roblox **Settings → Privacy → Who can join me? → Everyone**. The card says so.
 - Join can't follow someone into a private or reserved server (e.g. a dungeon instance). Post while in a public server.
