@@ -147,3 +147,8 @@ assert announcement_text("", "Raid at 8pm", "No ping") == "Raid at 8pm"
 assert announcement_text(" Weekly Trials ", "Line 1\nLine 2\n", "@everyone") == "@everyone\n# Weekly Trials\nLine 1\nLine 2"
 assert announcement_text("", "hi", "@here").startswith("@here\n")
 print("ok (announcements)")
+
+# LFP Pings: a poster pings at most once per 10 minutes
+from bot import lfp_should_ping, LFP_PING_COOLDOWN
+assert lfp_should_ping(0, LFP_PING_COOLDOWN) and not lfp_should_ping(100, 100 + LFP_PING_COOLDOWN - 1)
+print("ok (lfp pings)")

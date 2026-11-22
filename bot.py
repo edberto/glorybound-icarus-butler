@@ -51,6 +51,11 @@ PRESENCE_URL = "https://presence.roblox.com/v1/presence/users"
 LFP_MODES = Literal["Survival", "Ascension Island", "PvP", "Trials", "Weekly Trials"]
 LFP_MAX_AGE = 3600  # cards close after an hour
 LFP_OFFLINE_GRACE = 600  # ...or when the poster has been offline, once the card is 10 min old
+LFP_ROLE = "LFP Pings"  # opt-in role that /lfp mentions
+LFP_PING_COOLDOWN = 600  # one ping per poster per 10 min, so reposting can't spam everyone
+LFP_OPTIN_TEXT = ("**Want a ping when someone is looking for a party?**\n"
+                  "Click the button to get the **LFP Pings** role; click again to stop. "
+                  "Post your own party with `/lfp`.")
 PRESENCE_TEXT = {0: "Offline", 1: "Online, not in a game", 2: "In game", 3: "In Roblox Studio"}
 BLOXLINK_DAILY_LIMIT = int(os.environ.get("BLOXLINK_DAILY_LIMIT", "450"))
 DB_PATH = Path(os.environ.get("DB_PATH", "clan.db"))
@@ -197,6 +202,10 @@ def role_change_line(mention, added, removed, clan_member, roblox_username, over
     return line
 
 
+def lfp_should_ping(last_ping, now):
+    return now - last_ping >= LFP_PING_COOLDOWN
+
+
 def join_url(roblox_id):
     return JOIN_URL.format(place_id=PLACE_ID, user_id=roblox_id)
 
@@ -325,6 +334,7 @@ class ClanBot(discord.Client):
         self.alerted = set()
         self.last_room = {}  # member id -> when we last made them a room
         self.trapping = set()
+        self.last_lfp_ping = {}  # poster id -> when their /lfp last pinged LFP Pings
         self.renaming = set()  # nickname edits we just made, so on_member_update ignores them
         self.nick_blocked = set()  # members Discord won't let us rename (owner, higher roles)  # member ids currently being honeypot-kicked
 
@@ -552,6 +562,19 @@ class ClanBot(discord.Client):
             for c in cat.channels:
                 if not any(is_named(c, n) for n, _ in needed) and c.id not in rooms:
                     notes.append(f"extra channel left alone: {cat_name} / {c.name}")
+
+        # opt-in LFP Pings role + a pinned toggle button in looking-for-party
+        if discord.utils.get(guild.roles, name=LFP_ROLE) is None:
+            await guild.create_role(name=LFP_ROLE, mentionable=False, reason="opt-in /lfp pings")
+            notes.append(f"created role {LFP_ROLE}")
+        lfp_ch = self.channel("Public", "looking-for-party")
+        if not [m for m in await lfp_ch.pins() if m.author == guild.me and m.content == LFP_OPTIN_TEXT]:
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(label="Toggle LFP pings", emoji="\N{BELL}",
+                                            style=discord.ButtonStyle.primary, custom_id="lfp:role"))
+            optin = await lfp_ch.send(LFP_OPTIN_TEXT, view=view)
+            await optin.pin(reason="LFP pings opt-in")
+            notes.append("posted and pinned the LFP pings button")
 
         # honeypot: outside every category, visible and writable for everyone
         open_ow = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
@@ -829,7 +852,13 @@ class ClanBot(discord.Client):
                                         url=f"https://www.roblox.com/users/{rid}/profile"))
         view.add_item(discord.ui.Button(label="Close", style=discord.ButtonStyle.secondary, custom_id="lfp:close"))
         ch = self.channel("Public", "looking-for-party")
-        msg = await ch.send(lfp_text(member.display_name, mode, notes, username, presence, []), view=view)
+        role = discord.utils.get(ch.guild.roles, name=LFP_ROLE)
+        ping = role is not None and lfp_should_ping(self.last_lfp_ping.get(member.id, 0), time.time())
+        text = lfp_text(member.display_name, mode, notes, username, presence, [])
+        msg = await ch.send(f"{role.mention}\n{text}" if ping else text, view=view,
+                            allowed_mentions=discord.AllowedMentions(roles=[role]) if ping else NO_PINGS)
+        if ping:
+            self.last_lfp_ping[member.id] = time.time()
         self.db.execute("INSERT INTO lfp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
                         (msg.id, ch.id, member.id, rid, username, mode, notes, time.time(), presence))
         self.db.commit()
@@ -848,6 +877,17 @@ class ClanBot(discord.Client):
 
     async def on_interaction(self, i: discord.Interaction):
         cid = (i.data or {}).get("custom_id") if i.type == discord.InteractionType.component else None
+        if cid == "lfp:role":
+            role = discord.utils.get(i.guild.roles, name=LFP_ROLE)
+            if role is None:
+                return await i.response.send_message("The LFP Pings role is missing; ask an admin to run "
+                                                     "/check-server.", ephemeral=True)
+            if role in i.user.roles:
+                await i.user.remove_roles(role, reason="LFP pings opt-out")
+                return await i.response.send_message("Done: you won't get LFP pings anymore.", ephemeral=True)
+            await i.user.add_roles(role, reason="LFP pings opt-in")
+            return await i.response.send_message("Done: you'll be pinged when someone posts `/lfp`.",
+                                                 ephemeral=True)
         if cid not in ("lfp:join", "lfp:close"):
             return
         row = self.lfp_row(i.message.id)
