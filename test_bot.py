@@ -56,3 +56,20 @@ assert ro[member_role] == cat[member_role] and cat[everyone].send_messages is No
 assert channel_overwrites({}, everyone, True)[everyone].send_messages is False
 assert channel_overwrites(cat, everyone, False) == cat
 print("ok (channels)")
+
+# Bloxlink budget: linked people daily, unlinked people back off 5m -> 10m -> ... -> 1 day
+from bot import due_for_lookup
+day = 86400
+assert due_for_lookup(None, 0)
+assert not due_for_lookup((123, 0, 0), day - 1) and due_for_lookup((123, 0, 0), day)
+assert not due_for_lookup((None, 0, 0), 299) and due_for_lookup((None, 0, 0), 300)
+assert not due_for_lookup((None, 0, 3), 2399) and due_for_lookup((None, 0, 3), 2400)
+assert not due_for_lookup((None, 0, 50), day - 1) and due_for_lookup((None, 0, 50), day)
+# one never-verifying visitor costs ~9 lookups on day one, then 1 a day
+t, misses, calls = 0, 0, 0
+while t < day:
+    calls += 1
+    t += min(300 * 2 ** misses, day)
+    misses += 1
+assert calls <= 10, calls
+print("ok (bloxlink budget)")

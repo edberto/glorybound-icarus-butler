@@ -32,6 +32,8 @@ ROBLOX_USERS_URL = "https://users.roblox.com/v1/users"
 # Leader = Administrator. The clan API only gives display names, which anyone can copy,
 # so by default the bot never hands out Leader; clan Leaders get Member and you assign Leader by hand.
 AUTO_LEADER = os.environ.get("AUTO_LEADER", "0") == "1"
+# Free Bloxlink server keys get a limited number of lookups per day (500 when they announced it).
+BLOXLINK_DAILY_LIMIT = int(os.environ.get("BLOXLINK_DAILY_LIMIT", "450"))
 DB_PATH = Path(os.environ.get("DB_PATH", "clan.db"))
 JKT = ZoneInfo("Asia/Jakarta")
 
@@ -60,7 +62,9 @@ def open_db(path=DB_PATH):
     db = sqlite3.connect(path)
     db.executescript("""
     -- Bloxlink lookup cache (everyone in the server), so we don't re-query linked users every 5 min.
-    CREATE TABLE IF NOT EXISTS links(discord_id INTEGER PRIMARY KEY, roblox_id INTEGER, checked_at REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS links(discord_id INTEGER PRIMARY KEY, roblox_id INTEGER, checked_at REAL NOT NULL,
+        misses INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS api_usage(day TEXT PRIMARY KEY, count INTEGER NOT NULL);
     -- Current clan members who are in Discord.
     CREATE TABLE IF NOT EXISTS members(discord_id INTEGER PRIMARY KEY, roblox_id INTEGER NOT NULL, username TEXT,
         display_name TEXT NOT NULL, role TEXT NOT NULL, joined INTEGER);
@@ -110,6 +114,16 @@ def channel_overwrites(category_overwrites, everyone, read_only):
                  create_public_threads=False, create_private_threads=False)
         ow[everyone] = e
     return ow
+
+
+def due_for_lookup(row, now):
+    """row: (roblox_id, checked_at, misses) or None. Linked: once a day.
+    Not linked: back off 5, 10, 20 min ... up to a day (verifying is caught by on_member_update instead)."""
+    if row is None:
+        return True
+    rid, checked, misses = row
+    wait = 86400 if rid is not None else min(300 * 2 ** misses, 86400)
+    return now - checked >= wait
 
 
 def _cell(value, prev):
@@ -407,14 +421,21 @@ class ClanBot(discord.Client):
             raise UpstreamError("clan API returned no members")
         return members
 
-    async def refresh_links(self, discord_ids):
-        """Bloxlink: re-check unlinked people every cycle, linked people once a day."""
+    async def refresh_links(self, discord_ids, force=()):
+        """Ask Bloxlink about people who are due (see due_for_lookup), `force` first, within the daily budget."""
         now = time.time()
-        known = {d: (r, t) for d, r, t in self.db.execute("SELECT * FROM links")}
-        for did in discord_ids:
-            rid, checked = known.get(did, (None, 0))
-            if rid is not None and now - checked < 86400:
-                continue
+        day = datetime.now(JKT).date().isoformat()
+        known = {d: (r, t, m) for d, r, t, m in self.db.execute("SELECT * FROM links")}
+        due = [d for d in force if d in discord_ids] + [
+            d for d in discord_ids if d not in force and due_for_lookup(known.get(d), now)]
+        (used,) = self.db.execute("SELECT COALESCE(SUM(count), 0) FROM api_usage WHERE day=?", (day,)).fetchone()
+        for did in due:
+            if used >= BLOXLINK_DAILY_LIMIT:
+                log.warning("Bloxlink daily budget (%s) used up; %s lookups wait", BLOXLINK_DAILY_LIMIT, len(due))
+                break
+            used += 1
+            self.db.execute("INSERT INTO api_usage VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET count = count + 1",
+                            (day,))
             async with self.web.get(BLOXLINK_URL.format(guild=GUILD_ID, user=did),
                                     headers={"Authorization": BLOXLINK_KEY}) as r:
                 if r.status == 429:
@@ -425,10 +446,14 @@ class ClanBot(discord.Client):
                 elif r.status == 200:
                     data = await r.json(content_type=None)
                 else:  # bad key / outage: keep what we know rather than marking everyone unlinked
+                    self.db.commit()
                     raise UpstreamError(f"Bloxlink {r.status}")
             rid = data.get("robloxID") or data.get("robloxId")
-            self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, ?)",
-                            (did, int(rid) if str(rid or "").isdigit() else None, now))
+            rid = int(rid) if str(rid or "").isdigit() else None
+            prev = known.get(did)
+            misses = 0 if rid is not None else (prev[2] + 1 if prev and prev[0] is None else 0)
+            self.db.execute("INSERT OR REPLACE INTO links VALUES (?, ?, ?, ?)", (did, rid, now, misses))
+        self.db.execute("DELETE FROM api_usage WHERE day < ?", (day,))
         self.db.commit()
 
     async def roblox_users(self, ids):
@@ -440,13 +465,13 @@ class ClanBot(discord.Client):
                 out.update({u["id"]: (u["name"], u["displayName"]) for u in (await r.json())["data"]})
         return out
 
-    async def sync(self):
+    async def sync(self, force=()):
         async with self.lock:
             guild = self.guild
             clan = await self.fetch_clan()
             people = [m for m in guild.members if not m.bot]
-            await self.refresh_links([m.id for m in people])
-            links = {d: r for d, r, _ in self.db.execute("SELECT * FROM links") if r is not None}
+            await self.refresh_links([m.id for m in people], force)
+            links = {d: r for d, r, _, _ in self.db.execute("SELECT * FROM links") if r is not None}
             users = await self.roblox_users(sorted({links[m.id] for m in people if m.id in links}))
             accounts = {m.id: (links[m.id], *users[links[m.id]]) for m in people
                         if m.id in links and links[m.id] in users}
@@ -480,9 +505,20 @@ class ClanBot(discord.Client):
             return
         await member.add_roles(discord.utils.get(member.guild.roles, name="Visitor"), reason="new member")
         try:
-            await self.sync()
+            await self.sync(force=[member.id])
         except Exception:
             log.exception("sync on join failed")
+
+    async def on_member_update(self, before, after):
+        """Bloxlink gives its own roles / nickname when someone verifies: look them up right away."""
+        if after.guild.id != GUILD_ID or after.bot:
+            return
+        changed = {r.name for r in set(before.roles) ^ set(after.roles)} - MANAGED - {"Leader"}
+        if changed or before.nick != after.nick:
+            try:
+                await self.sync(force=[after.id])
+            except Exception:
+                log.exception("sync on member update failed")
 
     @tasks.loop(minutes=5)
     async def sync_loop(self):
