@@ -171,3 +171,9 @@ squash = lambda t: "".join(t.split())
 assert squash("".join(parts)) == squash(text)
 assert "1 day" in text
 print("ok (rules)", len(parts), "messages")
+
+# every #bot-commands message goes through bot_log (which turns mentions into plain names)
+import pathlib as _pl
+_src = (_pl.Path(__file__).resolve().parent / "bot.py").read_text(encoding="utf-8")
+assert _src.count('"bot-commands").send') == 1, "post to #bot-commands only via bot_log"
+print("ok (bot-commands only via bot_log)")

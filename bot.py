@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sqlite3
+import subprocess
 import time
 from datetime import datetime, time as dtime
 from pathlib import Path
@@ -210,6 +211,17 @@ def lfp_should_ping(last_ping, now):
 
 
 RULES_FILE = Path(__file__).resolve().parent / "rules.md"
+DEPLOY_NOTE = DB_PATH.resolve().parent / "deploy-note.txt"  # written by deploy/auto-update.sh
+
+
+def running_version():
+    """'abc1234 commit message' when running from a git checkout, else None."""
+    try:
+        out = subprocess.run(["git", "-C", str(RULES_FILE.parent), "log", "-1", "--format=%h %s"],
+                             capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def split_rules(text, limit=1900):
@@ -450,9 +462,9 @@ class ClanBot(discord.Client):
                 self.db.execute("INSERT OR REPLACE INTO overrides VALUES (?, ?, ?, ?)",
                                 (member.id, role, i.user.id, time.time()))
                 self.db.commit()
-                await self.channel("Admin", "bot-commands").send(
+                await self.bot_log([
                     f"{i.user.mention} set a role override: {member.mention} stays **{role}** until "
-                    "`/role-override-clear`.")
+                    "`/role-override-clear`."])
                 await self.sync()
                 return f"{member.mention} is now **{role}** and the sync will leave them alone."
             await admins_only(i, go)
@@ -466,8 +478,8 @@ class ClanBot(discord.Client):
                 self.db.commit()
                 if not gone:
                     return f"{member.mention} has no override."
-                await self.channel("Admin", "bot-commands").send(
-                    f"{i.user.mention} cleared the role override on {member.mention}; the clan sync manages them again.")
+                await self.bot_log([
+                    f"{i.user.mention} cleared the role override on {member.mention}; the clan sync manages them again."])
                 await self.sync()
                 return f"Cleared. {member.mention} now gets whatever the clan API says."
             await admins_only(i, go)
@@ -512,7 +524,10 @@ class ClanBot(discord.Client):
         notes = await self.ensure_layout(self.guild)
         for note in notes:
             log.info("layout: %s", note)
-        await self.bot_log(["**Started; server layout changes:**"] + [f"- {n}" for n in notes] if notes else [])
+        version = running_version()
+        await self.bot_log(["**Started**" + (f", version `{version}`" if version else "")]
+                           + ([f"- {n}" for n in notes] if notes else []))
+        await self.post_deploy_note()
         for (cid,) in self.db.execute("SELECT channel_id FROM rooms").fetchall():
             ch = self.guild.get_channel(cid)
             if ch is None or not ch.members:
@@ -650,14 +665,14 @@ class ClanBot(discord.Client):
             # the unban right after makes it a kick (they can rejoin with an invite).
             await member.ban(delete_message_seconds=300, reason="posted in #honeypot")
             await member.guild.unban(member, reason="honeypot softban: kick only")
-            await self.channel("Admin", "bot-commands").send(
+            await self.bot_log([
                 f"Kicked {member.mention} (`{member}`, {member.id}) for posting in #{HONEYPOT}; "
-                "deleted their messages from the last 5 minutes.")
+                "deleted their messages from the last 5 minutes."])
         except discord.HTTPException as e:
             log.warning("honeypot action on %s failed: %s", member.id, e)
-            await self.channel("Admin", "bot-commands").send(
+            await self.bot_log([
                 f"{member.mention} posted in #{HONEYPOT} but I couldn't kick/clean up ({e.status}). "
-                "Is my role above theirs? If the ban stuck, unban them in Server Settings > Bans.")
+                "Is my role above theirs? If the ban stuck, unban them in Server Settings > Bans."])
         finally:
             self.trapping.discard(member.id)
 
@@ -1002,8 +1017,20 @@ class ClanBot(discord.Client):
                     await self.render_lfp(row)
         except Exception:
             log.exception("lfp refresh failed")
+    async def post_deploy_note(self):
+        """Relay problems from the auto-updater (skipped or rolled-back updates) to #bot-commands."""
+        try:
+            if DEPLOY_NOTE.exists():
+                text = DEPLOY_NOTE.read_text(encoding="utf-8").strip()
+                DEPLOY_NOTE.unlink()
+                if text:
+                    await self.bot_log(["**Auto-update**"] + text.splitlines())
+        except OSError:
+            log.exception("couldn't read the deploy note")
+
     @tasks.loop(minutes=5)
     async def sync_loop(self):
+        await self.post_deploy_note()
         try:
             await self.sync()
         except Exception:
