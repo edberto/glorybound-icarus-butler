@@ -88,9 +88,9 @@ Put `GUILD_ID` and `BLOXLINK_KEY` in `.env`, then run `python3 check_bloxlink.py
    sudo dpkg-reconfigure -plow unattended-upgrades       # automatic security updates
    sudo useradd --system --create-home --home-dir /opt/clanbot clanbot
    sudo mv ~/bot.py ~/requirements.txt ~/.env /opt/clanbot/
-   cd /opt/clanbot
-   sudo python3 -m venv venv && sudo venv/bin/pip install -r requirements.txt
-   sudo chown -R clanbot:clanbot /opt/clanbot && sudo chmod 600 .env
+   sudo python3 -m venv /opt/clanbot/venv    # full paths: you can't cd into the bot user's folder
+   sudo /opt/clanbot/venv/bin/pip install -r /opt/clanbot/requirements.txt
+   sudo chown -R clanbot:clanbot /opt/clanbot && sudo chmod 600 /opt/clanbot/.env
    ```
 5. Create the service: `sudo nano /etc/systemd/system/clanbot.service` and paste:
    ```ini
