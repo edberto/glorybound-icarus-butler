@@ -5,6 +5,7 @@ What it does:
 - **#honeypot** (outside all categories): the bot posts a warning there. Anyone who posts is kicked, and their messages from the last 5 minutes in every channel are deleted. It does this by banning (which deletes the messages) and unbanning right away, so they can rejoin with an invite. Admins aren't kicked; their message is just deleted. Every kick is logged in `#bot-commands`.
 - **Names:** channels show with emoji (`🏺 Public`, `💬・general`, `🍯・honeypot` …). Existing channels with the plain names are renamed rather than duplicated. Change the look in `PRETTY` at the top of `bot.py`.
 - **Admin category:** Leader and Officers can see and use it. Officers can't create, edit or delete its channels or change their permissions. Everyone else can't see it.
+- **Nicknames:** everyone linked with Bloxlink gets their Roblox display name as their server nickname (not the owner or anyone above the bot; Discord forbids it). Turn **off** Bloxlink's own nickname updates so the two bots don't fight.
 - **Layout:** creates any missing roles, categories and channels, and fixes their permissions. It runs on startup and when you use `/check-server`. It never deletes anything; extra channels are only listed.
 - **Join me to create:** every category has one. Joining it makes "<name>'s room", moves you into it and lets you edit that room. Empty rooms are deleted.
 - **Roles, every 5 min and when someone joins:** Bloxlink → Roblox ID → Roblox display name → matched against the clan API. Clan members get Officer or Member; everyone else gets Visitor.
@@ -20,7 +21,7 @@ What it does:
 | `/role-override member role` | **Admins only.** Keeps Officer, Member or Visitor on someone and stops the sync changing them, e.g. guests or allies in Icarus, or someone who can't verify. Never expires on its own. Logged in `#bot-commands` |
 | `/role-override-clear member` | **Admins only.** Hands the member back to the clan sync |
 | `/role-overrides` | Lists everyone with an override |
-| `/lfp mode notes` | Anyone linked with Bloxlink. Posts a card in looking-for-party with **Join** (puts you in the poster's server), **Roblox profile** and **Close** buttons. Shows live status; closes after 1 hour or when the poster goes offline. One card per person |
+| `/lfp mode notes` | Anyone linked with Bloxlink. Posts "**<name>** is looking for a **<mode>** party" in looking-for-party with **Join**, **Roblox profile** and **Close** buttons. Join privately gives the clicker an Open Roblox button and adds them to the card's "Joining" list. Shows live status; closes after 1 hour or when the poster goes offline. One card per person |
 | `/bind clan_name member` | **Admins only.** Says which Discord member really owns a clan display name |
 
 ---
@@ -56,7 +57,7 @@ What it does:
 1. Make sure Bloxlink is in the server (https://blox.link → Add to Discord).
 2. Go to https://blox.link/dashboard → choose the server → **Developer / API** section → create a **server API key**. This is `BLOXLINK_KEY`.
 3. Members link their Roblox account with Bloxlink's `/verify`. Until they do, they stay Visitor. When Bloxlink gives them its Verified role or changes their nickname, the bot looks them up straight away.
-4. In Bloxlink's own settings, **don't** let Bloxlink assign the Leader, Officer, Member or Visitor roles too; the two bots would fight over them. Bloxlink's "Verified" role and nicknames are fine.
+4. In Bloxlink's own settings, **don't** let Bloxlink assign the Leader, Officer, Member or Visitor roles, and turn **off** its nickname updates; the bot does both. Keep Bloxlink's "Verified" role on: that's how the bot notices new verifications instantly.
 5. **Free tier quota.** Bloxlink announced the free server API with 500 lookups per day (unlimited with API Premium, $2.99/month at launch). The bot stays under this by itself:
    - Linked members are re-checked once a day.
    - Members who haven't verified are re-checked after 5 minutes, then 10, then 20, and so on, until it's once a day.
