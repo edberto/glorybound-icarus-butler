@@ -35,7 +35,8 @@ What it does:
    - Why Administrator: Discord only lets a bot grant permissions it has itself. Officers get "everything except Administrator", so the bot needs all of it.
 4. In Discord, turn on **User Settings → Advanced → Developer Mode**. Right-click the server icon → **Copy Server ID**. This is `GUILD_ID`.
 5. **Server Settings → Roles:** drag the bot's role (named after the bot) to the **very top**, above Leader. Without this it can't assign roles. The bot will create Leader, Officer, Member and Visitor itself on first start.
-6. Turn on 2FA on the Discord account that owns the application.
+6. **Bot → Icon:** upload `assets/avatar.png` (1024×1024). `assets/avatar.svg` is the editable source.
+7. Turn on 2FA on the Discord account that owns the application.
 
 ### 2. Bloxlink key (3 min)
 1. Make sure Bloxlink is in the server (https://blox.link → Add to Discord).
