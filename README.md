@@ -3,6 +3,7 @@
 What it does:
 - **Read-only channels:** Public has glorybound-announcements, announcements and rules; Icarus has announcements. Only Administrators (Leader, server admins) can post in them. Posts from followed announcement channels still come through.
 - **#honeypot** (outside all categories): the bot posts a warning there. Anyone who posts is kicked, and their messages from the last 5 minutes in every channel are deleted. It does this by banning (which deletes the messages) and unbanning right away, so they can rejoin with an invite. Admins aren't kicked; their message is just deleted. Every kick is logged in `#bot-commands`.
+- **Names:** channels show with emoji (`🏺 Public`, `💬・general`, `🍯・honeypot` …). Existing channels with the plain names are renamed rather than duplicated. Change the look in `PRETTY` at the top of `bot.py`.
 - **Layout:** creates any missing roles, categories and channels, and fixes their permissions. It runs on startup and when you use `/check-server`. It never deletes anything; extra channels are only listed.
 - **Join me to create:** every category has one. Joining it makes "<name>'s room", moves you into it and lets you edit that room. Empty rooms are deleted.
 - **Roles, every 5 min and when someone joins:** Bloxlink → Roblox ID → Roblox display name → matched against the clan API. Clan members get Officer or Member; everyone else gets Visitor.

@@ -50,6 +50,25 @@ LAYOUT = {
 # Nobody can post here except Administrators (Leader, server admins). Followed-channel posts still arrive.
 READ_ONLY = {("Public", "glorybound-announcements"), ("Public", "announcements"), ("Public", "rules"),
              ("Icarus", "announcements")}
+# What people see. The code uses the plain names; a channel with either name is found and renamed.
+# Text channel names must be lowercase, and no emoji that needs U+FE0F, or Discord stores them differently.
+PRETTY = {
+    "Public": "🏺 Public", "Icarus": "🪽 Icarus", "Admin": "🔒 Admin",
+    "glorybound-announcements": "📯・glorybound-announcements", "announcements": "📢・announcements",
+    "rules": "📜・rules", "general": "💬・general", "flex": "🏆・flex", "looking-for-party": "🎯・looking-for-party",
+    "clan-watcher": "📊・clan-watcher", "bot-commands": "🤖・bot-commands", HONEYPOT: "🍯・honeypot",
+    HUB: "➕ Join me to create",
+}
+
+
+def pretty(name):
+    return PRETTY.get(name, name)
+
+
+def is_named(channel, plain):
+    return channel.name in (plain, pretty(plain))
+
+
 ROLE_ORDER = ["Leader", "Officer", "Member", "Visitor"]  # top -> bottom
 RANK = {"Leader": 0, "Officer": 1, "Member": 2}
 ROLE_FOR = {"Leader": "Leader" if AUTO_LEADER else "Member", "Officer": "Officer", "Member": "Member"}
@@ -206,7 +225,8 @@ class ClanBot(discord.Client):
         return self.get_guild(GUILD_ID)
 
     def channel(self, cat, name):
-        return discord.utils.get(discord.utils.get(self.guild.categories, name=cat).text_channels, name=name)
+        category = next(c for c in self.guild.categories if is_named(c, cat))
+        return next(c for c in category.text_channels if is_named(c, name))
 
     def room_ids(self):
         return {r[0] for r in self.db.execute("SELECT channel_id FROM rooms")}
@@ -363,10 +383,13 @@ class ClanBot(discord.Client):
         rooms = self.room_ids()
         for cat_name, texts in LAYOUT.items():
             want = self.category_overwrites(cat_name, guild, roles)
-            cat = discord.utils.get(guild.categories, name=cat_name)
+            cat = next((c for c in guild.categories if is_named(c, cat_name)), None)
             if cat is None:
-                cat = await guild.create_category(cat_name, overwrites=want)
-                notes.append(f"created category {cat_name}")
+                cat = await guild.create_category(pretty(cat_name), overwrites=want)
+                notes.append(f"created category {pretty(cat_name)}")
+            elif cat.name != pretty(cat_name):
+                await cat.edit(name=pretty(cat_name))
+                notes.append(f"renamed category {cat_name} -> {pretty(cat_name)}")
             for target, ow in want.items():  # only enforce who can *see* it; leave other tweaks alone
                 cur = cat.overwrites_for(target)
                 if cur.view_channel != ow.view_channel:
@@ -375,33 +398,34 @@ class ClanBot(discord.Client):
                     notes.append(f"fixed who can see {cat_name} ({target})")
             needed = [(t, discord.ChannelType.text) for t in texts] + [(HUB, discord.ChannelType.voice)]
             for name, kind in needed:
-                ch = (next((c for c in cat.channels if c.name == name and c.type == kind), None)
-                      or next((c for c in guild.channels if c.category is None and c.name == name and c.type == kind), None))
+                ch = (next((c for c in cat.channels if is_named(c, name) and c.type == kind), None)
+                      or next((c for c in guild.channels
+                               if c.category is None and is_named(c, name) and c.type == kind), None))
                 read_only = (cat_name, name) in READ_ONLY
                 ow = channel_overwrites(cat.overwrites, guild.default_role, read_only)
                 if ch is None:
                     make = cat.create_text_channel if kind == discord.ChannelType.text else cat.create_voice_channel
-                    await make(name, overwrites=ow)
+                    await make(pretty(name), overwrites=ow)
                     notes.append(f"created {cat_name} / {name}" + (" (read-only)" if read_only else ""))
-                elif ch.category != cat or (ch.overwrites != ow if read_only else not ch.permissions_synced):
+                elif (ch.category != cat or ch.name != pretty(name)
+                      or (ch.overwrites != ow if read_only else not ch.permissions_synced)):
                     if read_only:
-                        await ch.edit(category=cat, overwrites=ow)
+                        await ch.edit(name=pretty(name), category=cat, overwrites=ow)
                     else:
-                        await ch.edit(category=cat, sync_permissions=True)
+                        await ch.edit(name=pretty(name), category=cat, sync_permissions=True)
                     notes.append(f"fixed {cat_name} / {name}")
-            wanted = {n for n, _ in needed}
             for c in cat.channels:
-                if c.name not in wanted and c.id not in rooms:
+                if not any(is_named(c, n) for n, _ in needed) and c.id not in rooms:
                     notes.append(f"extra channel left alone: {cat_name} / {c.name}")
 
         # honeypot: outside every category, visible and writable for everyone
         open_ow = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
-        pot = discord.utils.get(guild.text_channels, name=HONEYPOT)
+        pot = next((c for c in guild.text_channels if is_named(c, HONEYPOT)), None)
         if pot is None:
-            pot = await guild.create_text_channel(HONEYPOT, overwrites=open_ow)
+            pot = await guild.create_text_channel(pretty(HONEYPOT), overwrites=open_ow)
             notes.append(f"created #{HONEYPOT}")
-        elif pot.category is not None or pot.overwrites != open_ow:
-            await pot.edit(category=None, overwrites=open_ow)
+        elif pot.category is not None or pot.overwrites != open_ow or pot.name != pretty(HONEYPOT):
+            await pot.edit(name=pretty(HONEYPOT), category=None, overwrites=open_ow)
             notes.append(f"fixed #{HONEYPOT}")
         if not [m async for m in pot.history(limit=50) if m.author == guild.me and m.content == HONEYPOT_WARNING]:
             await pot.send(HONEYPOT_WARNING)
@@ -412,7 +436,7 @@ class ClanBot(discord.Client):
     async def on_message(self, message):
         ch = message.channel
         if (message.author.bot or message.guild is None or message.guild.id != GUILD_ID
-                or ch.name != HONEYPOT or ch.category is not None):
+                or not is_named(ch, HONEYPOT) or ch.category is not None):
             return
         member = message.author
         if member.guild_permissions.administrator:  # don't kick admins testing it; just clean up
@@ -443,7 +467,7 @@ class ClanBot(discord.Client):
         if before.channel and before.channel.id in self.room_ids() and not before.channel.members:
             await self.drop_room(before.channel, before.channel.id)
         hub = after.channel
-        if hub and hub.name == HUB and hub.category and hub.category.name in LAYOUT:
+        if hub and is_named(hub, HUB) and hub.category and any(is_named(hub.category, c) for c in LAYOUT):
             # hub-hopping would make the bot create/delete channels nonstop and hit Discord's rate limits
             if time.monotonic() - self.last_room.get(member.id, -60) < 15:
                 return await member.move_to(None)

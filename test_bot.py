@@ -83,3 +83,15 @@ assert wanted_role(None, "Officer") == "Officer"
 assert wanted_role(None, None) == "Visitor"
 assert wanted_role({"role": "Leader", "name": "x"}, None) == "Member"  # Leader is given by hand
 print("ok (overrides)")
+
+# pretty names: text channels must already be in the form Discord stores (lowercase, no U+FE0F)
+from types import SimpleNamespace
+from bot import PRETTY, LAYOUT, HONEYPOT, is_named
+for plain, shown in PRETTY.items():
+    assert "️" not in shown, shown
+    if plain in {n for names in LAYOUT.values() for n in names} | {HONEYPOT}:
+        assert shown == shown.lower() and " " not in shown, shown
+assert is_named(SimpleNamespace(name="general"), "general")  # old plain channels are found, then renamed
+assert is_named(SimpleNamespace(name="💬・general"), "general")
+assert not is_named(SimpleNamespace(name="general-2"), "general")
+print("ok (names)")
