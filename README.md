@@ -22,6 +22,8 @@ What it does:
 | `/role-override-clear member` | **Admins only.** Hands the member back to the clan sync |
 | `/role-overrides` | Lists everyone with an override |
 | `/lfp mode notes` | Anyone linked with Bloxlink. Posts "**<name>** is looking for a **<mode>** party" in looking-for-party with **Join**, **Roblox profile** and **Close** buttons. Join privately gives the clicker an Open Roblox button and adds them to the card's "Joining" list. Shows live status; closes after 1 hour or when the poster goes offline. One card per person |
+| `/announce-public [ping] [image]` | Officers and up. Opens a form (title + multi-line message) and posts it in Public / announcements. Ping: none, @here or @everyone |
+| `/announce-clan [ping] [image]` | Officers and up. Same, in Icarus / announcements; a ping only reaches clan members, since only they can see that channel |
 | `/bind clan_name member` | **Admins only.** Says which Discord member really owns a clan display name |
 
 ---
@@ -121,7 +123,12 @@ Put `GUILD_ID` and `BLOXLINK_KEY` in `.env`, then run `python3 check_bloxlink.py
    ```
    On the first start the log lists every role and channel it created or fixed. If you see `WARNING: drag the bot's role above Leader`, do step 1.5, then run `/check-server`.
 
-To update later: upload the new `bot.py` (and `requirements.txt`) via **SSH → Upload file**, then run `sudo mv ~/bot.py ~/requirements.txt /opt/clanbot/ && sudo chown -R clanbot:clanbot /opt/clanbot && sudo /opt/clanbot/venv/bin/pip install -r /opt/clanbot/requirements.txt && sudo systemctl restart clanbot`.
+**Run from GitHub instead of uploading files (recommended).** Do this once, in the SSH window:
+1. Upload `deploy/setup-github.sh` (SSH → Upload file), then run `sudo sh ~/setup-github.sh key`. It prints a key starting `ssh-ed25519`.
+2. On GitHub, open https://github.com/edberto/glorybound-icarus-butler/settings/keys/new. Title it `icarus-butler server`, paste the key, leave **Allow write access** off, and click **Add key**.
+3. Run `sudo sh ~/setup-github.sh clone`. The bot now runs from `/opt/clanbot/app`; `.env`, `clan.db` and the backups stay in `/opt/clanbot`.
+
+To update later: `sudo sh /opt/clanbot/app/deploy/update.sh` (pulls, installs requirements, restarts).
 
 ### 4. First-run checks in Discord
 1. Look in `#bot-commands`. Each "Gave X Officer" line should be a real officer. If one isn't, run `/bind clan_name:<name> member:@real-person`.

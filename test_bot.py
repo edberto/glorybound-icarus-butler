@@ -140,3 +140,10 @@ _b.get_guild = lambda _id: _NS(get_member=lambda uid: _NS(display_name="Rex*", n
 line = _re.sub(r"<@!?(\d+)>", lambda x: _b.plain_name(int(x[1])), "<@1>: +Officer; clash with <@!2>")
 assert line == r"Rex\* (@rexgyrox): +Officer; clash with user 2", line
 print("ok (no mentions)")
+
+# announcements
+from bot import announcement_text
+assert announcement_text("", "Raid at 8pm", "No ping") == "Raid at 8pm"
+assert announcement_text(" Weekly Trials ", "Line 1\nLine 2\n", "@everyone") == "@everyone\n# Weekly Trials\nLine 1\nLine 2"
+assert announcement_text("", "hi", "@here").startswith("@here\n")
+print("ok (announcements)")

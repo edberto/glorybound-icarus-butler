@@ -6,6 +6,7 @@
 - Monday 21:50 Asia/Jakarta: weekly table in Admin/clan-watcher.
 - Alerts (who got Officer, name clashes) go to Admin/bot-commands.
 - /role-override: admins pin someone's Officer/Member/Visitor role; the sync leaves them alone.
+- /announce-public, /announce-clan: post to the read-only announcements channels.
 - #honeypot: posting there gets you kicked and your last 5 minutes of messages deleted.
 """
 import asyncio
@@ -16,7 +17,7 @@ import sqlite3
 import time
 from datetime import datetime, time as dtime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -281,6 +282,38 @@ class UpstreamError(Exception):
     """An API we depend on misbehaved; skip this cycle instead of stripping roles."""
 
 
+PING_CHOICES = Literal["No ping", "@here", "@everyone"]
+
+
+def announcement_text(title, body, ping):
+    """What gets posted: optional ping line, optional '# title' heading, then the message."""
+    parts = [ping] if ping in ("@here", "@everyone") else []
+    if title.strip():
+        parts.append(f"# {title.strip()}")
+    parts.append(body.strip())
+    return "\n".join(parts)
+
+
+class AnnouncementModal(discord.ui.Modal):
+    """Multi-line editor for an announcement (slash-command options can't hold line breaks)."""
+    heading = discord.ui.TextInput(label="Title (optional)", required=False, max_length=200)
+    body = discord.ui.TextInput(label="Message", style=discord.TextStyle.paragraph, max_length=1750)
+
+    def __init__(self, bot, category, ping, image):
+        super().__init__(title=f"{'Public' if category == 'Public' else 'Clan'} announcement")
+        self.bot, self.category, self.ping, self.image = bot, category, ping, image
+
+    async def on_submit(self, i: discord.Interaction):
+        await i.response.defer(ephemeral=True)
+        try:
+            url = await self.bot.post_announcement(i.user, self.category, self.heading.value, self.body.value,
+                                                   self.ping, self.image)
+            await i.followup.send(f"Posted: {url}", ephemeral=True)
+        except Exception as e:
+            log.exception("announcement failed")
+            await i.followup.send(f"Failed: {type(e).__name__}", ephemeral=True)
+
+
 class ClanBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -403,6 +436,17 @@ class ClanBot(discord.Client):
                 rows = self.db.execute("SELECT discord_id, role, set_by, set_at FROM overrides ORDER BY role").fetchall()
                 return "\n".join(f"<@{d}> **{r}** (by <@{by}>, <t:{int(at)}:d>)" for d, r, by, at in rows)
             await run(i, go(), "No role overrides.")
+
+        def announce_command(name, category, where):
+            @self.tree.command(name=name, description=f"Post an announcement in {where}", guild=g)
+            @app_commands.describe(ping="Notify people who can see the channel", image="Optional picture to attach")
+            @staff
+            async def announce(i: discord.Interaction, ping: PING_CHOICES = "No ping",
+                               image: Optional[discord.Attachment] = None):
+                await i.response.send_modal(AnnouncementModal(self, category, ping, image))
+
+        announce_command("announce-public", "Public", "Public / announcements (everyone)")
+        announce_command("announce-clan", "Icarus", "Icarus / announcements (clan only)")
 
         @self.tree.command(name="lfp", description="Post a looking-for-party card with a Join button", guild=g)
         @app_commands.describe(mode="What you're playing", notes="Anything else, e.g. 'need healer, 2 slots'")
@@ -738,6 +782,16 @@ class ClanBot(discord.Client):
                 await self.sync(force=[after.id])
             except Exception:
                 log.exception("sync on member update failed")
+
+    # ---------- announcements ----------
+    async def post_announcement(self, author, category, title, body, ping, image):
+        ch = self.channel(category, "announcements")
+        files = [await image.to_file()] if image else []
+        msg = await ch.send(announcement_text(title, body, ping), files=files,
+                            allowed_mentions=discord.AllowedMentions(everyone=ping != "No ping"))
+        await self.bot_log([f"{author.mention} posted a {'public' if category == 'Public' else 'clan'} "
+                            f"announcement ({ping}): {msg.jump_url}"])
+        return msg.jump_url
 
     # ---------- looking for party ----------
     def lfp_row(self, message_id):
