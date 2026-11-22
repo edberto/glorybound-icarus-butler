@@ -9,12 +9,15 @@ What it does:
 - **Monday 21:50 (Jakarta):** a table in `#clan-watcher` sorted by role, then by join date. Each stat shows its value and the change since last week. It is posted as `<date>_partition_N_of_M` messages. If the database is ever lost, the bot rebuilds last week's numbers from the newest complete set.
 - **Alerts in `#bot-commands`:** who just got Officer, and any display-name clashes.
 
-## Commands (shown only to Officers and up)
+## Commands (shown only to Officers and up; Leader is never touched by the bot, so give it by hand)
 | Command | Does |
 |---|---|
 | `/check-server` | Checks the layout, fixes it, and lists what changed |
 | `/sync-now` | Runs the role sync immediately |
 | `/report-now [save]` | Posts the table now. Default is a preview (`_preview_` header) that isn't saved. `save:True` saves it as the snapshot |
+| `/role-override member role` | **Admins only.** Keeps Officer, Member or Visitor on someone and stops the sync changing them, e.g. guests or allies in Icarus, or someone who can't verify. Never expires on its own. Logged in `#bot-commands` |
+| `/role-override-clear member` | **Admins only.** Hands the member back to the clan sync |
+| `/role-overrides` | Lists everyone with an override |
 | `/bind clan_name member` | **Admins only.** Says which Discord member really owns a clan display name |
 
 ---

@@ -5,6 +5,7 @@
 - Every 5 min: clan API + Bloxlink -> Leader/Officer/Member/Visitor roles.
 - Monday 21:50 Asia/Jakarta: weekly table in Admin/clan-watcher.
 - Alerts (who got Officer, name clashes) go to Admin/bot-commands.
+- /role-override: admins pin someone's Officer/Member/Visitor role; the sync leaves them alone.
 - #honeypot: posting there gets you kicked and your last 5 minutes of messages deleted.
 """
 import asyncio
@@ -15,6 +16,7 @@ import sqlite3
 import time
 from datetime import datetime, time as dtime
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -72,6 +74,8 @@ def open_db(path=DB_PATH):
     CREATE TABLE IF NOT EXISTS bindings(clan_name TEXT PRIMARY KEY, roblox_id INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS snapshots(date TEXT, name TEXT, role TEXT, joined INTEGER, donTotal INTEGER,
         donWeek INTEGER, xpTotal INTEGER, xpWeek INTEGER, PRIMARY KEY(date, name));
+    -- Admin-set roles the sync must not touch: discord id -> Officer / Member / Visitor.
+    CREATE TABLE IF NOT EXISTS overrides(discord_id INTEGER PRIMARY KEY, role TEXT NOT NULL, set_by INTEGER, set_at REAL);
     CREATE TABLE IF NOT EXISTS rooms(channel_id INTEGER PRIMARY KEY, owner_id INTEGER);
     """)
     return db
@@ -114,6 +118,13 @@ def channel_overwrites(category_overwrites, everyone, read_only):
                  create_public_threads=False, create_private_threads=False)
         ow[everyone] = e
     return ow
+
+
+def wanted_role(clan_member, override):
+    """The one managed role someone should have: an admin override wins, then the clan API, else Visitor."""
+    if override:
+        return override
+    return ROLE_FOR.get(clan_member["role"], "Member") if clan_member else "Visitor"
 
 
 def due_for_lookup(row, now):
@@ -249,6 +260,51 @@ class ClanBot(discord.Client):
                 await self.sync()
                 return f"**{clan_name}** now belongs to {member.mention} (Roblox {row[0]})."
             await run(i, go(), "")
+
+        async def admins_only(i, go):
+            # these decide who gets Officer, so admins only, even if someone loosens the command setting
+            if not i.user.guild_permissions.administrator:
+                return await i.response.send_message("Only admins can use this.", ephemeral=True)
+            await run(i, go(), "")
+
+        @self.tree.command(name="role-override", description="Keep this role on a member; the clan sync won't change it",
+                           guild=g)
+        @app_commands.default_permissions(administrator=True)
+        async def role_override(i: discord.Interaction, member: discord.Member,
+                                role: Literal["Officer", "Member", "Visitor"]):
+            async def go():
+                self.db.execute("INSERT OR REPLACE INTO overrides VALUES (?, ?, ?, ?)",
+                                (member.id, role, i.user.id, time.time()))
+                self.db.commit()
+                await self.channel("Admin", "bot-commands").send(
+                    f"{i.user.mention} set a role override: {member.mention} stays **{role}** until "
+                    "`/role-override-clear`.")
+                await self.sync()
+                return f"{member.mention} is now **{role}** and the sync will leave them alone."
+            await admins_only(i, go)
+
+        @self.tree.command(name="role-override-clear", description="Let the clan sync manage this member again",
+                           guild=g)
+        @app_commands.default_permissions(administrator=True)
+        async def role_override_clear(i: discord.Interaction, member: discord.Member):
+            async def go():
+                gone = self.db.execute("DELETE FROM overrides WHERE discord_id=?", (member.id,)).rowcount
+                self.db.commit()
+                if not gone:
+                    return f"{member.mention} has no override."
+                await self.channel("Admin", "bot-commands").send(
+                    f"{i.user.mention} cleared the role override on {member.mention}; the clan sync manages them again.")
+                await self.sync()
+                return f"Cleared. {member.mention} now gets whatever the clan API says."
+            await admins_only(i, go)
+
+        @self.tree.command(name="role-overrides", description="List members whose role is set by hand", guild=g)
+        @app_commands.default_permissions(administrator=True)
+        async def role_overrides(i: discord.Interaction):
+            async def go():
+                rows = self.db.execute("SELECT discord_id, role, set_by, set_at FROM overrides ORDER BY role").fetchall()
+                return "\n".join(f"<@{d}> **{r}** (by <@{by}>, <t:{int(at)}:d>)" for d, r, by, at in rows)
+            await run(i, go(), "No role overrides.")
 
         await self.tree.sync(guild=g)
 
@@ -483,13 +539,15 @@ class ClanBot(discord.Client):
                 self.db.executemany("INSERT INTO members VALUES (?, ?, ?, ?, ?, ?)",
                                     [(d, *accounts[d], m["role"], m.get("joined")) for d, m in assign.items()])
             roles = {n: discord.utils.get(guild.roles, name=n) for n in MANAGED}
+            overrides = dict(self.db.execute("SELECT discord_id, role FROM overrides"))
             for member in people:
                 m = assign.get(member.id)
-                want = {roles[ROLE_FOR.get(m["role"], "Member")]} if m else {roles["Visitor"]}
+                want = {roles[wanted_role(m, overrides.get(member.id))]}
                 have = {r for r in member.roles if r.name in MANAGED}
                 if want - have:
                     await member.add_roles(*(want - have), reason="clan sync")
-                    if roles["Officer"] in want - have or roles.get("Leader") in want - have:
+                    if member.id not in overrides and (roles["Officer"] in want - have
+                                                       or roles.get("Leader") in want - have):
                         await self.channel("Admin", "bot-commands").send(
                             f"Gave {member.mention} **{ROLE_FOR[m['role']]}** (clan name **{m['name']}**, "
                             f"Roblox @{accounts[member.id][1]}). Wrong person? `/bind` the right one.")

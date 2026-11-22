@@ -73,3 +73,13 @@ while t < day:
     misses += 1
 assert calls <= 10, calls
 print("ok (bloxlink budget)")
+
+# manual overrides beat the clan API; otherwise clan role, else Visitor
+from bot import wanted_role
+officer = {"role": "Officer", "name": "rexgyrox"}
+assert wanted_role(officer, None) == "Officer"
+assert wanted_role(officer, "Member") == "Member"
+assert wanted_role(None, "Officer") == "Officer"
+assert wanted_role(None, None) == "Visitor"
+assert wanted_role({"role": "Leader", "name": "x"}, None) == "Member"  # Leader is given by hand
+print("ok (overrides)")
