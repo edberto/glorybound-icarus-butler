@@ -133,6 +133,12 @@ Put `GUILD_ID` and `BLOXLINK_KEY` in `.env`, then run `python3 check_bloxlink.py
 
 To update later: `sudo sh /opt/clanbot/app/deploy/update.sh` (pulls, installs requirements, restarts).
 
+**Automatic updates (optional):** `sudo sh /opt/clanbot/app/deploy/setup-github.sh auto`. Every 5 minutes the server checks GitHub for a new commit on `main`. It then:
+- runs `test_bot.py` on it, and keeps the current version if the checks fail;
+- otherwise switches and restarts, and rolls back if the bot isn't still up 45 seconds later.
+
+The bot posts its version in `#bot-commands` on every start, plus a note whenever an update was skipped or rolled back. A rejected commit isn't retried; push a fix. Turn it off with `... setup-github.sh manual`. Log: `journalctl -u clanbot-update -n 50`.
+
 ### 4. First-run checks in Discord
 1. Look in `#bot-commands`. Each "Gave X Officer" line should be a real officer. If one isn't, run `/bind clan_name:<name> member:@real-person`.
 2. Give **Leader** to Arius (and anyone else) by hand.
