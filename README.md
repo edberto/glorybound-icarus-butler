@@ -20,9 +20,19 @@ What it does:
 | `/role-override member role` | **Admins only.** Keeps Officer, Member or Visitor on someone and stops the sync changing them, e.g. guests or allies in Icarus, or someone who can't verify. Never expires on its own. Logged in `#bot-commands` |
 | `/role-override-clear member` | **Admins only.** Hands the member back to the clan sync |
 | `/role-overrides` | Lists everyone with an override |
+| `/lfp mode notes` | Anyone linked with Bloxlink. Posts a card in looking-for-party with **Join** (puts you in the poster's server), **Roblox profile** and **Close** buttons. Shows live status; closes after 1 hour or when the poster goes offline. One card per person |
 | `/bind clan_name member` | **Admins only.** Says which Discord member really owns a clan display name |
 
 ---
+
+## /lfp (looking for party)
+- Modes: Survival, Ascension Island, PvP, Trials, Weekly Trials, plus free-text notes.
+- **Join works for non-friends** only if the poster sets Roblox **Settings → Privacy → Who can join me? → Everyone**. The card says so.
+- Join can't follow someone into a private or reserved server (e.g. a dungeon instance). Post while in a public server.
+- Set `PLACE_ID` in `.env` (from Glorybound's page URL `roblox.com/games/<PLACE_ID>/...`).
+- **Test once:** have a friend post `/lfp` while in game and click Join. If it starts Glorybound but in a different server, Roblox's web link is ignoring the "follow" part. Then:
+  1. Create a **public** GitHub repo (e.g. `icarus-join`), add `docs/join.html` from this repo as `join.html`, and turn on **Settings → Pages** (branch `main`, root).
+  2. In `.env` set `JOIN_URL=https://<you>.github.io/icarus-join/join.html?placeId={place_id}&userId={user_id}` and restart the bot.
 
 ## Manual setup
 

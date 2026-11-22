@@ -117,3 +117,16 @@ msgs = chunk_lines([f"<@{i}>: +Member, -Visitor (clan Member **someone_{i}**, Ro
 assert len(msgs) > 1 and all(len(m) <= 1900 for m in msgs) and sum(m.count("\n") + 1 for m in msgs) == 300
 assert chunk_lines([]) == []
 print("ok (bot log)")
+
+# looking-for-party cards
+from bot import lfp_should_close, lfp_embed, join_url, LFP_MAX_AGE
+import bot as _bot
+assert not lfp_should_close(0, 60, 2) and lfp_should_close(0, LFP_MAX_AGE, 2)
+assert not lfp_should_close(0, 300, 0)  # offline right after posting: give them 10 min to get in game
+assert lfp_should_close(0, 600, 0) and not lfp_should_close(0, 600, 1)
+e = lfp_embed("Rex", None, "Weekly Trials", "need healer", "rexgyrox", 2, 0)
+assert e.title.startswith("Weekly Trials") and e.fields[1].value == "In game" and e.description == "need healer"
+assert lfp_embed("Rex", None, "PvP", "", "rex", None, 0).description is None
+_bot.PLACE_ID = "123"
+assert join_url(456) == "https://www.roblox.com/games/start?placeId=123&userId=456"
+print("ok (lfp)")

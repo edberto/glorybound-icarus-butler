@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Joining on Roblox…</title>
+<p>Opening Roblox… If nothing happens, make sure the Roblox app is installed.</p>
+<script>
+  // Fallback for the /lfp Join button: Discord buttons only take https links, so this page
+  // forwards to Roblox's app link. Only digits are accepted, so it can't be used to redirect elsewhere.
+  const q = new URLSearchParams(location.search);
+  const user = q.get("userId") || "", place = q.get("placeId") || "";
+  if (/^\d+$/.test(user) && /^\d*$/.test(place)) {
+    location.href = "roblox://experiences/start?" + (place ? "placeId=" + place + "&" : "") + "userId=" + user;
+  }
+</script>

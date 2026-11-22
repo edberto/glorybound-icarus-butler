@@ -41,6 +41,16 @@ ROBLOX_USERS_URL = "https://users.roblox.com/v1/users"
 # so by default the bot never hands out Leader; clan Leaders get Member and you assign Leader by hand.
 AUTO_LEADER = os.environ.get("AUTO_LEADER", "0") == "1"
 # Free Bloxlink server keys get a limited number of lookups per day (500 when they announced it).
+# Looking-for-party cards. PLACE_ID = Glorybound's id from its roblox.com/games/<id>/... page.
+PLACE_ID = os.environ.get("PLACE_ID", "")
+# Roblox's "follow this player" link. Works for anyone (friends or not) when the poster's
+# Roblox Privacy > "Who can join me?" is Everyone. Override if Roblox's web link ignores userId.
+JOIN_URL = os.environ.get("JOIN_URL", "https://www.roblox.com/games/start?placeId={place_id}&userId={user_id}")
+PRESENCE_URL = "https://presence.roblox.com/v1/presence/users"
+LFP_MODES = Literal["Survival", "Ascension Island", "PvP", "Trials", "Weekly Trials"]
+LFP_MAX_AGE = 3600  # cards close after an hour
+LFP_OFFLINE_GRACE = 600  # ...or when the poster has been offline, once the card is 10 min old
+PRESENCE_TEXT = {0: "Offline", 1: "Online, not in a game", 2: "In game", 3: "In Roblox Studio"}
 BLOXLINK_DAILY_LIMIT = int(os.environ.get("BLOXLINK_DAILY_LIMIT", "450"))
 DB_PATH = Path(os.environ.get("DB_PATH", "clan.db"))
 JKT = ZoneInfo("Asia/Jakarta")
@@ -101,6 +111,9 @@ def open_db(path=DB_PATH):
         donWeek INTEGER, xpTotal INTEGER, xpWeek INTEGER, PRIMARY KEY(date, name));
     -- Admin-set roles the sync must not touch: discord id -> Officer / Member / Visitor.
     CREATE TABLE IF NOT EXISTS overrides(discord_id INTEGER PRIMARY KEY, role TEXT NOT NULL, set_by INTEGER, set_at REAL);
+    CREATE TABLE IF NOT EXISTS lfp(message_id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL,
+        poster_id INTEGER NOT NULL, roblox_id INTEGER NOT NULL, username TEXT, mode TEXT NOT NULL, notes TEXT,
+        created_at REAL NOT NULL, presence INTEGER);
     CREATE TABLE IF NOT EXISTS rooms(channel_id INTEGER PRIMARY KEY, owner_id INTEGER);
     """)
     return db
@@ -177,6 +190,27 @@ def role_change_line(mention, added, removed, clan_member, roblox_username, over
     if not overridden and {"Officer", "Leader"} & set(added):
         line += " - wrong person? `/bind` the right one"
     return line
+
+
+def join_url(roblox_id):
+    return JOIN_URL.format(place_id=PLACE_ID, user_id=roblox_id)
+
+
+def lfp_should_close(created_at, now, presence):
+    """An LFP card closes after an hour, or once it's 10+ min old and the poster is offline."""
+    age = now - created_at
+    return age >= LFP_MAX_AGE or (presence == 0 and age >= LFP_OFFLINE_GRACE)
+
+
+def lfp_embed(poster_name, poster_avatar, mode, notes, username, presence, created_at):
+    e = discord.Embed(title=f"{mode} — looking for party", description=notes or None, color=0xF2B544,
+                      timestamp=datetime.fromtimestamp(created_at, JKT))
+    e.set_author(name=poster_name, icon_url=poster_avatar)
+    e.add_field(name="Roblox", value=f"@{username}")
+    e.add_field(name="Status", value=PRESENCE_TEXT.get(presence, "Unknown"))
+    e.set_footer(text="Join not working? The poster needs Roblox Settings > Privacy > "
+                      "Who can join me? > Everyone. Closes after 1 hour or when they go offline.")
+    return e
 
 
 def due_for_lookup(row, now):
@@ -362,6 +396,11 @@ class ClanBot(discord.Client):
                 return "\n".join(f"<@{d}> **{r}** (by <@{by}>, <t:{int(at)}:d>)" for d, r, by, at in rows)
             await run(i, go(), "No role overrides.")
 
+        @self.tree.command(name="lfp", description="Post a looking-for-party card with a Join button", guild=g)
+        @app_commands.describe(mode="What you're playing", notes="Anything else, e.g. 'need healer, 2 slots'")
+        async def lfp(i: discord.Interaction, mode: LFP_MODES, notes: app_commands.Range[str, 0, 300] = ""):
+            await run(i, self.post_lfp(i.user, mode, notes), "")
+
         await self.tree.sync(guild=g)
 
     async def on_ready(self):
@@ -379,6 +418,7 @@ class ClanBot(discord.Client):
                 await self.drop_room(ch, cid)
         self.sync_loop.start()
         self.daily_loop.start()
+        self.lfp_loop.start()
 
     async def close(self):
         await self.web.close()
@@ -579,6 +619,16 @@ class ClanBot(discord.Client):
         self.db.execute("DELETE FROM api_usage WHERE day < ?", (day,))
         self.db.commit()
 
+    async def presence(self, ids):
+        """Roblox presence without logging in: 0 offline, 1 online, 2 in game, 3 in Studio."""
+        out = {}
+        for i in range(0, len(ids), 50):
+            async with self.web.post(PRESENCE_URL, json={"userIds": ids[i:i + 50]}) as r:
+                if r.status != 200:
+                    raise UpstreamError(f"Roblox presence API {r.status}")
+                out.update({p["userId"]: p["userPresenceType"] for p in (await r.json())["userPresences"]})
+        return out
+
     async def roblox_users(self, ids):
         out = {}
         for i in range(0, len(ids), 100):
@@ -652,6 +702,78 @@ class ClanBot(discord.Client):
                 await self.sync(force=[after.id])
             except Exception:
                 log.exception("sync on member update failed")
+
+    # ---------- looking for party ----------
+    async def post_lfp(self, member, mode, notes):
+        if not PLACE_ID and "{place_id}" in JOIN_URL:
+            return "LFP isn't set up yet: an admin needs to add PLACE_ID to the bot's .env."
+        async with self.lock:
+            await self.refresh_links([member.id], force=[member.id])
+        row = self.db.execute("SELECT roblox_id FROM links WHERE discord_id=?", (member.id,)).fetchone()
+        if not row or row[0] is None:
+            return "Link your Roblox account first: run `/verify` (Bloxlink), then try `/lfp` again."
+        rid = row[0]
+        username = (await self.roblox_users([rid])).get(rid, (str(rid),))[0]
+        presence = (await self.presence([rid])).get(rid)
+        for (old,) in self.db.execute("SELECT message_id FROM lfp WHERE poster_id=?", (member.id,)).fetchall():
+            await self.close_lfp(old)  # one card per person
+        now = time.time()
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(label="Join", style=discord.ButtonStyle.link, url=join_url(rid)))
+        view.add_item(discord.ui.Button(label="Roblox profile", style=discord.ButtonStyle.link,
+                                        url=f"https://www.roblox.com/users/{rid}/profile"))
+        view.add_item(discord.ui.Button(label="Close", style=discord.ButtonStyle.secondary, custom_id="lfp:close"))
+        ch = self.channel("Public", "looking-for-party")
+        msg = await ch.send(embed=lfp_embed(member.display_name, member.display_avatar.url, mode, notes, username,
+                                            presence, now), view=view)
+        self.db.execute("INSERT INTO lfp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (msg.id, ch.id, member.id, rid, username, mode, notes, now, presence))
+        self.db.commit()
+        tip = "" if presence == 2 else " You're not in a game right now, so Join won't work until you are."
+        return f"Posted: {msg.jump_url}{tip}"
+
+    async def close_lfp(self, message_id):
+        row = self.db.execute("SELECT channel_id FROM lfp WHERE message_id=?", (message_id,)).fetchone()
+        self.db.execute("DELETE FROM lfp WHERE message_id=?", (message_id,))
+        self.db.commit()
+        if row and (ch := self.get_channel(row[0])):
+            try:
+                await ch.get_partial_message(message_id).delete()
+            except discord.HTTPException:
+                pass  # already gone
+
+    async def on_interaction(self, i: discord.Interaction):
+        if i.type != discord.InteractionType.component or (i.data or {}).get("custom_id") != "lfp:close":
+            return
+        row = self.db.execute("SELECT poster_id FROM lfp WHERE message_id=?", (i.message.id,)).fetchone()
+        allowed = row is None or i.user.id == row[0] or i.user.guild_permissions.manage_messages
+        if not allowed:
+            return await i.response.send_message("Only the poster or a moderator can close this.", ephemeral=True)
+        await i.response.send_message("Closed.", ephemeral=True)
+        await self.close_lfp(i.message.id)
+
+    @tasks.loop(minutes=2)
+    async def lfp_loop(self):
+        """Keep each card's status fresh; close it after an hour or when the poster goes offline."""
+        try:
+            rows = self.db.execute("SELECT message_id, channel_id, poster_id, roblox_id, username, mode, notes, "
+                                   "created_at, presence FROM lfp").fetchall()
+            if not rows:
+                return
+            now_presence = await self.presence(sorted({r[3] for r in rows}))
+            for mid, cid, poster, rid, username, mode, notes, created, old in rows:
+                p = now_presence.get(rid)
+                if lfp_should_close(created, time.time(), p):
+                    await self.close_lfp(mid)
+                elif p != old and (ch := self.get_channel(cid)):
+                    member = ch.guild.get_member(poster)
+                    name, avatar = (member.display_name, member.display_avatar.url) if member else (username, None)
+                    await ch.get_partial_message(mid).edit(
+                        embed=lfp_embed(name, avatar, mode, notes, username, p, created))
+                    self.db.execute("UPDATE lfp SET presence=? WHERE message_id=?", (p, mid))
+                    self.db.commit()
+        except Exception:
+            log.exception("lfp refresh failed")
 
     @tasks.loop(minutes=5)
     async def sync_loop(self):
