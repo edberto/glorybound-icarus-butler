@@ -26,6 +26,12 @@ from discord.ext import tasks
 
 log = logging.getLogger("clanbot")
 
+if Path(".env").exists():  # lets you run it locally with just a .env (systemd sets these itself on the server)
+    for _line in Path(".env").read_text().splitlines():
+        _k, _, _v = _line.partition("=")
+        if _v and not _k.strip().startswith("#"):
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 GUILD_ID = int(os.environ.get("GUILD_ID", "0"))
 BLOXLINK_KEY = os.environ.get("BLOXLINK_KEY", "")
 CLAN_URL = os.environ.get("CLAN_URL", "https://glorybound-clan-network.vercel.app/api/clans/q7vd1z_toioa4")
