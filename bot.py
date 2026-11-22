@@ -358,8 +358,12 @@ class ClanBot(discord.Client):
         show, hide = discord.PermissionOverwrite(view_channel=True), discord.PermissionOverwrite(view_channel=False)
         if cat_name == "Public":
             return {guild.default_role: show}
-        visible = ["Leader", "Officer", "Member"] if cat_name == "Icarus" else ["Leader"]
-        return {guild.default_role: hide, guild.me: show, **{roles[n]: show for n in visible}}
+        if cat_name == "Icarus":
+            return {guild.default_role: hide, guild.me: show, **{roles[n]: show for n in ("Leader", "Officer", "Member")}}
+        # Admin: Officers see and use it, but can't create, edit or delete its channels or their permissions
+        officer = discord.PermissionOverwrite(view_channel=True, manage_channels=False, manage_roles=False,
+                                              manage_webhooks=False)
+        return {guild.default_role: hide, guild.me: show, roles["Leader"]: show, roles["Officer"]: officer}
 
     async def ensure_layout(self, guild):
         notes = []
@@ -396,12 +400,13 @@ class ClanBot(discord.Client):
             elif cat.name != pretty(cat_name):
                 await cat.edit(name=pretty(cat_name))
                 notes.append(f"renamed category {cat_name} -> {pretty(cat_name)}")
-            for target, ow in want.items():  # only enforce who can *see* it; leave other tweaks alone
+            for target, ow in want.items():  # enforce only the permissions we set; leave other tweaks alone
                 cur = cat.overwrites_for(target)
-                if cur.view_channel != ow.view_channel:
-                    cur.view_channel = ow.view_channel
+                wrong = {k: v for k, v in ow if v is not None and getattr(cur, k) != v}
+                if wrong:
+                    cur.update(**wrong)
                     await cat.set_permissions(target, overwrite=cur)
-                    notes.append(f"fixed who can see {cat_name} ({target})")
+                    notes.append(f"fixed {cat_name} permissions for {target}: {', '.join(wrong)}")
             needed = [(t, discord.ChannelType.text) for t in texts] + [(HUB, discord.ChannelType.voice)]
             for name, kind in needed:
                 ch = (next((c for c in cat.channels if is_named(c, name) and c.type == kind), None)

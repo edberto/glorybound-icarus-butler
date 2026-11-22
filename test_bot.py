@@ -95,3 +95,14 @@ assert is_named(SimpleNamespace(name="general"), "general")  # old plain channel
 assert is_named(SimpleNamespace(name="💬・general"), "general")
 assert not is_named(SimpleNamespace(name="general-2"), "general")
 print("ok (names)")
+
+# Admin category: Officers see it but can't edit its channels; Members/Visitors don't see it
+from bot import ClanBot
+g = SimpleNamespace(default_role="everyone", me="bot")
+roles = {n: n for n in ("Leader", "Officer", "Member", "Visitor")}
+admin = ClanBot.category_overwrites("Admin", g, roles)
+assert admin["Officer"].view_channel is True and admin["Officer"].manage_channels is False
+assert admin["Officer"].manage_roles is False and admin["everyone"].view_channel is False
+assert "Member" not in admin and admin["Leader"].view_channel is True
+assert ClanBot.category_overwrites("Icarus", g, roles)["Member"].view_channel is True
+print("ok (admin category)")
