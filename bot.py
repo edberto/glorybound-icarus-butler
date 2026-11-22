@@ -505,9 +505,9 @@ class ClanBot(discord.Client):
 
         @self.tree.command(name="post-rules", description="Post rules.md in the rules channel (replaces the old copy)",
                            guild=g)
-        @app_commands.default_permissions(administrator=True)
+        @staff
         async def post_rules(i: discord.Interaction):
-            await admins_only(i, lambda: self.post_rules(i.user))
+            await run(i, self.post_rules(i.user), "")
 
         @self.tree.command(name="lfp", description="Post a looking-for-party card with a Join button", guild=g)
         @app_commands.describe(mode="What you're playing", notes="Anything else, e.g. 'need healer, 2 slots'")
