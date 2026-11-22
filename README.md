@@ -74,33 +74,25 @@ Put `GUILD_ID` and `BLOXLINK_KEY` in `.env`, then run `python3 check_bloxlink.py
 2. your Roblox username and display name,
 3. which clan role the bot would give you.
 
-### 3. Oracle VM (15 min)
-1. https://cloud.oracle.com → sign up for the Always Free tier.
-2. **Compute → Instances → Create instance.**
-   - Image: **Ubuntu 24.04**.
-   - Shape: `VM.Standard.A1.Flex` (Ampere) with 1 OCPU / 6 GB, or `VM.Standard.E2.1.Micro` if Ampere has no capacity. Both are free and both are plenty.
-   - Under SSH keys, upload your public key or download the generated one.
-   - Networking: the default VCN is fine. The bot only makes outgoing connections, so **don't open any ports** besides the default SSH (22).
-3. When it's running, copy the **Public IP** and connect: `ssh -i <key> ubuntu@<ip>`.
-4. On the VM:
+### 3. Google Cloud VM (free e2-micro, ~20 min)
+1. Sign up at https://cloud.google.com/free (card needed for verification). Before the 90-day trial ends, click **Activate full account**, or Google deletes the trial's resources. Staying inside the free limits costs nothing.
+2. In https://console.cloud.google.com create a project `icarus-butler`. Under **Billing → Budgets & alerts**, set a 1 USD budget so you're emailed if anything ever costs money.
+3. **Compute Engine → VM instances → Create instance:**
+   - Region us-west1, us-central1 or us-east1 (only these are free).
+   - Machine **e2-micro**.
+   - Ubuntu 24.04 LTS on a 30 GB **Standard persistent disk** (the default Balanced disk isn't free).
+   - No HTTP/HTTPS firewall rules.
+4. Click **SSH** on the VM row (browser terminal). Use **Upload file** to send `bot.py`, `requirements.txt` and `.env`. Then run:
    ```bash
    sudo apt update && sudo apt install -y python3-venv unattended-upgrades
    sudo dpkg-reconfigure -plow unattended-upgrades       # automatic security updates
    sudo useradd --system --create-home --home-dir /opt/clanbot clanbot
-   ```
-5. Copy the files from your computer (run this on your computer, not the VM):
-   ```bash
-   scp -i <key> bot.py requirements.txt .env.example ubuntu@<ip>:/tmp/
-   ```
-6. Back on the VM:
-   ```bash
-   sudo mv /tmp/bot.py /tmp/requirements.txt /tmp/.env.example /opt/clanbot/
+   sudo mv ~/bot.py ~/requirements.txt ~/.env /opt/clanbot/
    cd /opt/clanbot
-   sudo cp .env.example .env && sudo nano .env            # fill in the three values
    sudo python3 -m venv venv && sudo venv/bin/pip install -r requirements.txt
    sudo chown -R clanbot:clanbot /opt/clanbot && sudo chmod 600 .env
    ```
-7. Create the service: `sudo nano /etc/systemd/system/clanbot.service` and paste:
+5. Create the service: `sudo nano /etc/systemd/system/clanbot.service` and paste:
    ```ini
    [Unit]
    Description=Icarus clan bot
@@ -122,14 +114,14 @@ Put `GUILD_ID` and `BLOXLINK_KEY` in `.env`, then run `python3 check_bloxlink.py
    [Install]
    WantedBy=multi-user.target
    ```
-8. Start it and watch the log:
+6. Start it and watch the log:
    ```bash
    sudo systemctl daemon-reload && sudo systemctl enable --now clanbot
    journalctl -u clanbot -f
    ```
    On the first start the log lists every role and channel it created or fixed. If you see `WARNING: drag the bot's role above Leader`, do step 1.5, then run `/check-server`.
 
-To update later: copy the new `bot.py` over, then `sudo systemctl restart clanbot`.
+To update later: upload the new `bot.py` (and `requirements.txt`) via **SSH → Upload file**, then run `sudo mv ~/bot.py ~/requirements.txt /opt/clanbot/ && sudo chown -R clanbot:clanbot /opt/clanbot && sudo /opt/clanbot/venv/bin/pip install -r /opt/clanbot/requirements.txt && sudo systemctl restart clanbot`.
 
 ### 4. First-run checks in Discord
 1. Look in `#bot-commands`. Each "Gave X Officer" line should be a real officer. If one isn't, run `/bind clan_name:<name> member:@real-person`.
