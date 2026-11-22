@@ -5,6 +5,7 @@
 - Every 5 min: clan API + Bloxlink -> Leader/Officer/Member/Visitor roles.
 - Monday 21:50 Asia/Jakarta: weekly table in Admin/clan-watcher.
 - Alerts (who got Officer, name clashes) go to Admin/bot-commands.
+- #honeypot: posting there gets you kicked and your last 5 minutes of messages deleted.
 """
 import asyncio
 import logging
@@ -35,6 +36,8 @@ DB_PATH = Path(os.environ.get("DB_PATH", "clan.db"))
 JKT = ZoneInfo("Asia/Jakarta")
 
 HUB = "Join me to create"
+HONEYPOT = "honeypot"  # outside all categories; anyone who posts here is kicked
+HONEYPOT_WARNING = "# DO NOT SEND MESSAGES HERE UNLESS YOU WANT TO BE KICKED"
 LAYOUT = {
     "Public": ["glorybound-announcements", "announcements", "rules", "general", "flex", "looking-for-party"],
     "Icarus": ["announcements", "general"],
@@ -171,6 +174,7 @@ class ClanBot(discord.Client):
         self.lock = asyncio.Lock()
         self.alerted = set()
         self.last_room = {}  # member id -> when we last made them a room
+        self.trapping = set()  # member ids currently being honeypot-kicked
 
     @property
     def guild(self):
@@ -319,7 +323,48 @@ class ClanBot(discord.Client):
             for c in cat.channels:
                 if c.name not in wanted and c.id not in rooms:
                     notes.append(f"extra channel left alone: {cat_name} / {c.name}")
+
+        # honeypot: outside every category, visible and writable for everyone
+        open_ow = {guild.default_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
+        pot = discord.utils.get(guild.text_channels, name=HONEYPOT)
+        if pot is None:
+            pot = await guild.create_text_channel(HONEYPOT, overwrites=open_ow)
+            notes.append(f"created #{HONEYPOT}")
+        elif pot.category is not None or pot.overwrites != open_ow:
+            await pot.edit(category=None, overwrites=open_ow)
+            notes.append(f"fixed #{HONEYPOT}")
+        if not [m async for m in pot.history(limit=50) if m.author == guild.me and m.content == HONEYPOT_WARNING]:
+            await pot.send(HONEYPOT_WARNING)
+            notes.append(f"posted the warning in #{HONEYPOT}")
         return notes
+
+    # ---------- honeypot ----------
+    async def on_message(self, message):
+        ch = message.channel
+        if (message.author.bot or message.guild is None or message.guild.id != GUILD_ID
+                or ch.name != HONEYPOT or ch.category is not None):
+            return
+        member = message.author
+        if member.guild_permissions.administrator:  # don't kick admins testing it; just clean up
+            return await message.delete()
+        if member.id in self.trapping:
+            return  # spam burst: already handling this person
+        self.trapping.add(member.id)
+        try:
+            # "Softban": a ban deletes their messages from the last 5 minutes in every channel,
+            # the unban right after makes it a kick (they can rejoin with an invite).
+            await member.ban(delete_message_seconds=300, reason="posted in #honeypot")
+            await member.guild.unban(member, reason="honeypot softban: kick only")
+            await self.channel("Admin", "bot-commands").send(
+                f"Kicked {member.mention} (`{member}`, {member.id}) for posting in #{HONEYPOT}; "
+                "deleted their messages from the last 5 minutes.")
+        except discord.HTTPException as e:
+            log.warning("honeypot action on %s failed: %s", member.id, e)
+            await self.channel("Admin", "bot-commands").send(
+                f"{member.mention} posted in #{HONEYPOT} but I couldn't kick/clean up ({e.status}). "
+                "Is my role above theirs? If the ban stuck, unban them in Server Settings > Bans.")
+        finally:
+            self.trapping.discard(member.id)
 
     # ---------- join-to-create rooms ----------
     async def on_voice_state_update(self, member, before, after):
