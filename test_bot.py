@@ -106,3 +106,14 @@ assert admin["Officer"].manage_roles is False and admin["everyone"].view_channel
 assert "Member" not in admin and admin["Leader"].view_channel is True
 assert ClanBot.category_overwrites("Icarus", g, roles)["Member"].view_channel is True
 print("ok (admin category)")
+
+# #bot-commands log: one line per member, packed into messages under 2000 chars
+from bot import chunk_lines, role_change_line
+line = role_change_line("<@1>", {"Officer"}, {"Visitor"}, {"role": "Officer", "name": "rexgyrox"}, "rex", False)
+assert line.startswith("<@1>: +Officer, -Visitor (clan Officer **rexgyrox**, Roblox @rex)") and "/bind" in line
+assert role_change_line("<@2>", {"Visitor"}, {"Member"}, None, None, False) == "<@2>: +Visitor, -Member (not a matched clan member)"
+assert "/bind" not in role_change_line("<@3>", {"Officer"}, set(), None, None, True)
+msgs = chunk_lines([f"<@{i}>: +Member, -Visitor (clan Member **someone_{i}**, Roblox @someone)" for i in range(300)])
+assert len(msgs) > 1 and all(len(m) <= 1900 for m in msgs) and sum(m.count("\n") + 1 for m in msgs) == 300
+assert chunk_lines([]) == []
+print("ok (bot log)")

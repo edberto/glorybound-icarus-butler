@@ -9,7 +9,7 @@ What it does:
 - **Join me to create:** every category has one. Joining it makes "<name>'s room", moves you into it and lets you edit that room. Empty rooms are deleted.
 - **Roles, every 5 min and when someone joins:** Bloxlink → Roblox ID → Roblox display name → matched against the clan API. Clan members get Officer or Member; everyone else gets Visitor.
 - **Monday 21:50 (Jakarta):** a table in `#clan-watcher` sorted by role, then by join date. Each stat shows its value and the change since last week. It is posted as `<date>_partition_N_of_M` messages. If the database is ever lost, the bot rebuilds last week's numbers from the newest complete set.
-- **Alerts in `#bot-commands`:** who just got Officer, and any display-name clashes.
+- **Log in `#bot-commands`:** every role the bot adds or removes (one message per sync, with the reason), joins, layout fixes on startup and `/check-server`, overrides, honeypot kicks and display-name clashes.
 
 ## Commands (shown only to Officers and up; Leader is never touched by the bot, so give it by hand)
 | Command | Does |

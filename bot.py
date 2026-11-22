@@ -152,6 +152,33 @@ def wanted_role(clan_member, override):
     return ROLE_FOR.get(clan_member["role"], "Member") if clan_member else "Visitor"
 
 
+def chunk_lines(lines, limit=1900):
+    """Pack log lines into as few Discord messages as fit under the 2000-char limit."""
+    msgs, cur = [], ""
+    for line in lines:
+        line = line[:limit]
+        if cur and len(cur) + 1 + len(line) > limit:
+            msgs.append(cur)
+            cur = ""
+        cur = f"{cur}\n{line}" if cur else line
+    return msgs + ([cur] if cur else [])
+
+
+def role_change_line(mention, added, removed, clan_member, roblox_username, overridden):
+    """One #bot-commands line per member whose roles the sync changed."""
+    changes = ", ".join([f"+{r}" for r in sorted(added)] + [f"-{r}" for r in sorted(removed)])
+    if overridden:
+        why = "admin override"
+    elif clan_member:
+        why = f"clan {clan_member['role']} **{clan_member['name']}**, Roblox @{roblox_username}"
+    else:
+        why = "not a matched clan member"
+    line = f"{mention}: {changes} ({why})"
+    if not overridden and {"Officer", "Leader"} & set(added):
+        line += " - wrong person? `/bind` the right one"
+    return line
+
+
 def due_for_lookup(row, now):
     """row: (roblox_id, checked_at, misses) or None. Linked: once a day.
     Not linked: back off 5, 10, 20 min ... up to a day (verifying is caught by on_member_update instead)."""
@@ -256,7 +283,10 @@ class ClanBot(discord.Client):
         @staff
         async def check_server(i: discord.Interaction):
             async def go():
-                return "\n".join(await self.ensure_layout(self.guild))
+                notes = await self.ensure_layout(self.guild)
+                await self.bot_log([f"**/check-server by {i.user.mention}:**"] + [f"- {n}" for n in notes]
+                                   if notes else [])
+                return "\n".join(notes)
             await run(i, go(), "Server already matches the layout.")
 
         @self.tree.command(name="sync-now", description="Re-check clan roles now", guild=g)
@@ -339,8 +369,10 @@ class ClanBot(discord.Client):
             return  # reconnect
         if self.guild is None:
             raise SystemExit(f"Bot isn't in guild {GUILD_ID}")
-        for note in await self.ensure_layout(self.guild):
+        notes = await self.ensure_layout(self.guild)
+        for note in notes:
             log.info("layout: %s", note)
+        await self.bot_log(["**Started; server layout changes:**"] + [f"- {n}" for n in notes] if notes else [])
         for (cid,) in self.db.execute("SELECT channel_id FROM rooms").fetchall():
             ch = self.guild.get_channel(cid)
             if ch is None or not ch.members:
@@ -575,28 +607,33 @@ class ClanBot(discord.Client):
                                     [(d, *accounts[d], m["role"], m.get("joined")) for d, m in assign.items()])
             roles = {n: discord.utils.get(guild.roles, name=n) for n in MANAGED}
             overrides = dict(self.db.execute("SELECT discord_id, role FROM overrides"))
+            changes = []
             for member in people:
                 m = assign.get(member.id)
                 want = {roles[wanted_role(m, overrides.get(member.id))]}
                 have = {r for r in member.roles if r.name in MANAGED}
                 if want - have:
                     await member.add_roles(*(want - have), reason="clan sync")
-                    if member.id not in overrides and (roles["Officer"] in want - have
-                                                       or roles.get("Leader") in want - have):
-                        await self.channel("Admin", "bot-commands").send(
-                            f"Gave {member.mention} **{ROLE_FOR[m['role']]}** (clan name **{m['name']}**, "
-                            f"Roblox @{accounts[member.id][1]}). Wrong person? `/bind` the right one.")
                 if have - want:
                     await member.remove_roles(*(have - want), reason="clan sync")
-            for a in alerts:
-                if a not in self.alerted:
-                    await self.channel("Admin", "bot-commands").send(a)
+                if want != have:
+                    changes.append(role_change_line(
+                        member.mention, {r.name for r in want - have}, {r.name for r in have - want}, m,
+                        accounts[member.id][1] if member.id in accounts else None, member.id in overrides))
+            await self.bot_log(["**Role sync**"] + changes if changes else [])
+            await self.bot_log([a for a in alerts if a not in self.alerted])
             self.alerted = set(alerts)
+
+    async def bot_log(self, lines):
+        """Post to Admin / bot-commands (no pings), split under Discord's message limit."""
+        for msg in chunk_lines(lines):
+            await self.channel("Admin", "bot-commands").send(msg)
 
     async def on_member_join(self, member):
         if member.guild.id != GUILD_ID or member.bot:
             return
         await member.add_roles(discord.utils.get(member.guild.roles, name="Visitor"), reason="new member")
+        await self.bot_log([f"{member.mention} joined: +Visitor"])
         try:
             await self.sync(force=[member.id])
         except Exception:
