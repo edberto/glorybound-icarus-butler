@@ -666,34 +666,49 @@ class ClanBot(discord.Client):
             roles = {n: discord.utils.get(guild.roles, name=n) for n in MANAGED}
             overrides = dict(self.db.execute("SELECT discord_id, role FROM overrides"))
             changes = []
-            for member in people:
-                m = assign.get(member.id)
-                want = {roles[wanted_role(m, overrides.get(member.id))]}
-                have = {r for r in member.roles if r.name in MANAGED}
+            try:
+                for member in people:
+                    await self.apply_member(member, roles, assign.get(member.id), overrides, accounts, changes)
+            finally:  # log what did change even if something below failed
+                await self.bot_log(["**Sync**"] + changes if changes else [])
+            await self.bot_log([a for a in alerts if a not in self.alerted])
+            self.alerted = set(alerts)
+
+    async def apply_member(self, member, roles, m, overrides, accounts, changes):
+        """Give one member their managed role and nickname; record each change (or failure) in `changes`."""
+        want = {roles[wanted_role(m, overrides.get(member.id))]}
+        have = {r for r in member.roles if r.name in MANAGED}
+        if want != have:
+            try:
                 if want - have:
                     await member.add_roles(*(want - have), reason="clan sync")
                 if have - want:
                     await member.remove_roles(*(have - want), reason="clan sync")
-                if want != have:
-                    changes.append(role_change_line(
-                        member.mention, {r.name for r in want - have}, {r.name for r in have - want}, m,
-                        accounts[member.id][1] if member.id in accounts else None, member.id in overrides))
-                nick = accounts[member.id][2][:32] if member.id in accounts else None
-                if nick and member.display_name != nick and member.id not in self.nick_blocked:
-                    try:
-                        self.renaming.add(member.id)
-                        await member.edit(nick=nick, reason="Roblox display name")
-                        changes.append(f"{member.mention}: nickname -> **{discord.utils.escape_markdown(nick)}**")
-                    except discord.HTTPException:  # owner / role above the bot: Discord won't allow it
-                        self.renaming.discard(member.id)
-                        self.nick_blocked.add(member.id)
-                        changes.append(f"{member.mention}: can't set nickname (their role is above the bot's)")
-            await self.bot_log(["**Sync**"] + changes if changes else [])
-            await self.bot_log([a for a in alerts if a not in self.alerted])
-            self.alerted = set(alerts)
+                changes.append(role_change_line(
+                    member.mention, {r.name for r in want - have}, {r.name for r in have - want}, m,
+                    accounts[member.id][1] if member.id in accounts else None, member.id in overrides))
+            except discord.HTTPException as e:
+                changes.append(f"{member.mention}: couldn't change roles ({e.status}); is the bot's role on top?")
+        nick = accounts[member.id][2][:32] if member.id in accounts else None
+        if nick and member.display_name != nick and member.id not in self.nick_blocked:
+            old = member.display_name
+            try:
+                self.renaming.add(member.id)
+                await member.edit(nick=nick, reason="Roblox display name")
+                changes.append(f"{member.mention}: nickname {discord.utils.escape_markdown(old)} -> "
+                               f"**{discord.utils.escape_markdown(nick)}**")
+            except discord.HTTPException:  # owner / role above the bot: Discord won't allow it
+                self.renaming.discard(member.id)
+                self.nick_blocked.add(member.id)
+                changes.append(f"{member.mention}: can't set nickname (their role is above the bot's)")
+
+    def plain_name(self, user_id):
+        m = self.guild.get_member(user_id) if self.guild else None
+        return f"{discord.utils.escape_markdown(m.display_name)} (@{m.name})" if m else f"user {user_id}"
 
     async def bot_log(self, lines):
-        """Post to Admin / bot-commands (no pings), split under Discord's message limit."""
+        """Post to Admin / bot-commands as plain names (no mentions), split under Discord's message limit."""
+        lines = [re.sub(r"<@!?(\d+)>", lambda x: self.plain_name(int(x[1])), line) for line in lines]
         for msg in chunk_lines(lines):
             try:
                 await self.channel("Admin", "bot-commands").send(msg)

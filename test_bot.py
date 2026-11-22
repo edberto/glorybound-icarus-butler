@@ -131,3 +131,12 @@ assert "Joining" not in lfp_text("Rex", "PvP", "", "rex", None, [])
 _bot.PLACE_ID = "123"
 assert join_url(456) == "https://www.roblox.com/games/start?placeId=123&userId=456"
 print("ok (lfp)")
+
+# #bot-commands shows plain names, never mentions
+import re as _re
+from types import SimpleNamespace as _NS
+_b = ClanBot.__new__(ClanBot)
+_b.get_guild = lambda _id: _NS(get_member=lambda uid: _NS(display_name="Rex*", name="rexgyrox") if uid == 1 else None)
+line = _re.sub(r"<@!?(\d+)>", lambda x: _b.plain_name(int(x[1])), "<@1>: +Officer; clash with <@!2>")
+assert line == r"Rex\* (@rexgyrox): +Officer; clash with user 2", line
+print("ok (no mentions)")
