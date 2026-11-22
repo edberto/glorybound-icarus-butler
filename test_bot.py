@@ -160,3 +160,14 @@ assert not lfp_chat_expired(0, LFP_CHAT_TTL - 1, pinned=False, is_card=False)
 assert not lfp_chat_expired(0, 10 * LFP_CHAT_TTL, pinned=True, is_card=False)
 assert not lfp_chat_expired(0, 10 * LFP_CHAT_TTL, pinned=False, is_card=True)
 print("ok (lfp cleanup)")
+
+# rules.md splits into Discord-sized messages at section headings, losing nothing
+from bot import split_rules, RULES_FILE
+text = RULES_FILE.read_text(encoding="utf-8")
+parts = split_rules(text)
+assert all(len(p) <= 1900 for p in parts) and parts[0].startswith("# ")
+assert all(p.startswith(("# ", "## ")) for p in parts)
+squash = lambda t: "".join(t.split())
+assert squash("".join(parts)) == squash(text)
+assert "1 day" in text
+print("ok (rules)", len(parts), "messages")

@@ -7,6 +7,7 @@
 - Alerts (who got Officer, name clashes) go to Admin/bot-commands.
 - /role-override: admins pin someone's Officer/Member/Visitor role; the sync leaves them alone.
 - /announce-public, /announce-clan: post to the read-only announcements channels.
+- /post-rules: posts rules.md into the rules channel (replacing the previous copy).
 - #honeypot: posting there gets you kicked and your last 5 minutes of messages deleted.
 """
 import asyncio
@@ -206,6 +207,27 @@ def role_change_line(mention, added, removed, clan_member, roblox_username, over
 
 def lfp_should_ping(last_ping, now):
     return now - last_ping >= LFP_PING_COOLDOWN
+
+
+RULES_FILE = Path(__file__).resolve().parent / "rules.md"
+
+
+def split_rules(text, limit=1900):
+    """Split rules.md into Discord messages at section headings, each under the 2000-char limit."""
+    sections, cur = [], []
+    for line in text.strip().splitlines():
+        if line.startswith("## ") and cur:
+            sections.append("\n".join(cur).strip())
+            cur = []
+        cur.append(line)
+    sections.append("\n".join(cur).strip())
+    msgs = []
+    for sec in sections:
+        if msgs and len(msgs[-1]) + 2 + len(sec) <= limit:
+            msgs[-1] += "\n\n" + sec
+        else:
+            msgs.append(sec[:limit])
+    return msgs
 
 
 def lfp_chat_expired(created_ts, now, pinned, is_card):
@@ -468,6 +490,12 @@ class ClanBot(discord.Client):
 
         announce_command("announce-public", "Public", "Public / announcements (everyone)")
         announce_command("announce-clan", "Icarus", "Icarus / announcements (clan only)")
+
+        @self.tree.command(name="post-rules", description="Post rules.md in the rules channel (replaces the old copy)",
+                           guild=g)
+        @app_commands.default_permissions(administrator=True)
+        async def post_rules(i: discord.Interaction):
+            await admins_only(i, lambda: self.post_rules(i.user))
 
         @self.tree.command(name="lfp", description="Post a looking-for-party card with a Join button", guild=g)
         @app_commands.describe(mode="What you're playing", notes="Anything else, e.g. 'need healer, 2 slots'")
@@ -820,6 +848,20 @@ class ClanBot(discord.Client):
                 await self.sync(force=[after.id])
             except Exception:
                 log.exception("sync on member update failed")
+
+    # ---------- rules ----------
+    async def post_rules(self, author):
+        ch = self.channel("Public", "rules")
+        msgs = split_rules(RULES_FILE.read_text(encoding="utf-8"))
+        old = [m async for m in ch.history(limit=100) if m.author == ch.guild.me]
+        for m in old:
+            await m.delete()
+        first = None
+        for text in msgs:
+            sent = await ch.send(text)
+            first = first or sent
+        await self.bot_log([f"{author.mention} posted the rules ({len(msgs)} messages): {first.jump_url}"])
+        return f"Posted {len(msgs)} messages in rules (replaced {len(old)} old ones): {first.jump_url}"
 
     # ---------- announcements ----------
     async def post_announcement(self, author, category, title, body, ping, image):

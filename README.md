@@ -24,6 +24,7 @@ What it does:
 | `/lfp mode notes` | Anyone linked with Bloxlink. Posts "**<name>** is looking for a **<mode>** party" in looking-for-party with **Join**, **Roblox profile** and **Close** buttons. Join privately gives the clicker an Open Roblox button and adds them to the card's "Joining" list. Shows live status; closes after 1 hour or when the poster goes offline. One card per person |
 | `/announce-public [ping] [image]` | Officers and up. Opens a form (title + multi-line message) and posts it in Public / announcements. Ping: none, @here or @everyone |
 | `/announce-clan [ping] [image]` | Officers and up. Same, in Icarus / announcements; a ping only reaches clan members, since only they can see that channel |
+| `/post-rules` | **Admins only.** Posts `rules.md` in Public / rules, replacing the bot's previous copy. Edit `rules.md` in the repo, update the server, run it again |
 | `/bind clan_name member` | **Admins only.** Says which Discord member really owns a clan display name |
 
 ---
