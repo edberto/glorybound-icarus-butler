@@ -925,9 +925,24 @@ class ClanBot(discord.Client):
             self.db.commit()
             await self.render_lfp(row)
 
+    async def clean_lfp_channel(self):
+        """Delete looking-for-party messages older than 15 min, except pins and open party cards."""
+        try:
+            cards = {m for (m,) in self.db.execute("SELECT message_id FROM lfp")}
+            now = time.time()
+            ch = self.channel("Public", "looking-for-party")
+            gone = await ch.purge(limit=200, before=discord.Object(discord.utils.time_snowflake(
+                datetime.fromtimestamp(now - LFP_CHAT_TTL, JKT))), check=lambda m: lfp_chat_expired(
+                m.created_at.timestamp(), now, m.pinned, m.id in cards), reason="looking-for-party cleanup")
+            if gone:
+                log.info("cleared %s old messages from looking-for-party", len(gone))
+        except Exception:
+            log.exception("looking-for-party cleanup failed")
+
     @tasks.loop(minutes=2)
     async def lfp_loop(self):
         """Keep each card's status fresh; close it after an hour or when the poster goes offline."""
+        await self.clean_lfp_channel()
         try:
             mids = [m for (m,) in self.db.execute("SELECT message_id FROM lfp").fetchall()]
             rows = [self.lfp_row(m) for m in mids]
@@ -945,18 +960,6 @@ class ClanBot(discord.Client):
                     await self.render_lfp(row)
         except Exception:
             log.exception("lfp refresh failed")
-        try:  # keep looking-for-party clean
-            cards = {m for (m,) in self.db.execute("SELECT message_id FROM lfp")}
-            now = time.time()
-            ch = self.channel("Public", "looking-for-party")
-            gone = await ch.purge(limit=200, before=discord.Object(discord.utils.time_snowflake(
-                datetime.fromtimestamp(now - LFP_CHAT_TTL, JKT))), check=lambda m: lfp_chat_expired(
-                m.created_at.timestamp(), now, m.pinned, m.id in cards), reason="looking-for-party cleanup")
-            if gone:
-                log.info("cleared %s old messages from looking-for-party", len(gone))
-        except Exception:
-            log.exception("looking-for-party cleanup failed")
-
     @tasks.loop(minutes=5)
     async def sync_loop(self):
         try:
