@@ -38,6 +38,9 @@ What it does:
 6. **Bot → Icon:** upload `assets/avatar.png` (1024×1024). `assets/avatar.svg` is the editable source.
 7. Turn on 2FA on the Discord account that owns the application.
 
+### 1b. Server icon
+**Server Settings → Overview → Server Icon:** upload `assets/icarus-logo.png` (1024×1024; `assets/icarus-logo.svg` is the editable source).
+
 ### 2. Bloxlink key (3 min)
 1. Make sure Bloxlink is in the server (https://blox.link → Add to Discord).
 2. Go to https://blox.link/dashboard → choose the server → **Developer / API** section → create a **server API key**. This is `BLOXLINK_KEY`.
