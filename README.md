@@ -37,6 +37,7 @@ What it does:
 1. Make sure Bloxlink is in the server (https://blox.link → Add to Discord).
 2. Go to https://blox.link/dashboard → choose the server → **Developer / API** section → create a **server API key**. This is `BLOXLINK_KEY`.
 3. Members link their Roblox account with Bloxlink's `/verify`. Until they do, they stay Visitor. When Bloxlink gives them its Verified role or changes their nickname, the bot looks them up straight away.
+4. In Bloxlink's own settings, **don't** let Bloxlink assign the Leader, Officer, Member or Visitor roles too; the two bots would fight over them. Bloxlink's "Verified" role and nicknames are fine.
 5. **Free tier quota.** Bloxlink announced the free server API with 500 lookups per day (unlimited with API Premium, $2.99/month at launch). The bot stays under this by itself:
    - Linked members are re-checked once a day.
    - Members who haven't verified are re-checked after 5 minutes, then 10, then 20, and so on, until it's once a day.
@@ -44,7 +45,6 @@ What it does:
    - It stops at 450 lookups a day (`BLOXLINK_DAILY_LIMIT`).
 
    A 100-person server uses about 100–150 lookups a day. If you buy API Premium, raise `BLOXLINK_DAILY_LIMIT`.
-4. In Bloxlink's own settings, **don't** let Bloxlink assign the Leader, Officer, Member or Visitor roles too; the two bots would fight over them. Bloxlink's "Verified" role and nicknames are fine.
 
 > The bot calls `https://api.blox.link/v4/public/guilds/<server>/discord-to-roblox/<user>`. If Bloxlink's dashboard shows a different URL, update `BLOXLINK_URL` at the top of `bot.py`.
 
