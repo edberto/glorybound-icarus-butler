@@ -627,7 +627,10 @@ class ClanBot(discord.Client):
     async def bot_log(self, lines):
         """Post to Admin / bot-commands (no pings), split under Discord's message limit."""
         for msg in chunk_lines(lines):
-            await self.channel("Admin", "bot-commands").send(msg)
+            try:
+                await self.channel("Admin", "bot-commands").send(msg)
+            except (StopIteration, discord.HTTPException):  # channel missing (bot role too low) or Discord error
+                log.warning("couldn't post to #bot-commands: %s", msg)
 
     async def on_member_join(self, member):
         if member.guild.id != GUILD_ID or member.bot:
